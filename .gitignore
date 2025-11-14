@@ -43,7 +43,7 @@ Thumbs.db
 workspace/logs/
 
 # Database files
-workspace/gater_knowledge_graph/
+workspace/gater_knowledge_graph
 *.db
 *.sqlite
 
@@ -53,6 +53,7 @@ workspace/data/entities.jsonl
 workspace/data/knowledge_graph.jsonl
 workspace/data/step5_relevance_scores.json
 
+workspace/embeddings_cache/
 # Environment variables
 .env
 
