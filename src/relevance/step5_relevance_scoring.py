@@ -13,6 +13,13 @@ from .relevance_scorer import RelevanceScorer, RelevanceScore
 from .embedding_generator import EmbeddingGenerator
 from .path_calculator import PathCalculator
 
+# Import vector storage for Step 6 integration
+try:
+    from ..vector_storage.step6_vector_storage import Step6VectorStorage
+    VECTOR_STORAGE_AVAILABLE = True
+except ImportError:
+    VECTOR_STORAGE_AVAILABLE = False
+
 
 class Step5RelevanceScoring:
     """
@@ -26,7 +33,8 @@ class Step5RelevanceScoring:
                  workspace_dir: str = "workspace",
                  alpha: float = 0.3,
                  beta: float = 0.6,
-                 top_k: int = 20):
+                 top_k: int = 20,
+                 auto_store_vectors: bool = True):
         """
         Initialize Step 5 relevance scoring
         
@@ -35,6 +43,7 @@ class Step5RelevanceScoring:
             alpha: KGCompass alpha parameter (embedding vs textual similarity balance)
             beta: KGCompass beta parameter (path decay factor)
             top_k: Number of top candidates to return
+            auto_store_vectors: Automatically store results in LanceDB (Step 6)
         """
         self.workspace_dir = Path(workspace_dir)
         self.workspace_dir.mkdir(exist_ok=True)
@@ -42,6 +51,7 @@ class Step5RelevanceScoring:
         self.alpha = alpha
         self.beta = beta
         self.top_k = top_k
+        self.auto_store_vectors = auto_store_vectors
         
         self.logger = logging.getLogger(__name__)
         
@@ -56,6 +66,18 @@ class Step5RelevanceScoring:
             alpha=alpha,
             beta=beta
         )
+        
+        # Initialize vector storage for automatic persistence
+        self.vector_storage = None
+        if auto_store_vectors and VECTOR_STORAGE_AVAILABLE:
+            try:
+                self.vector_storage = Step6VectorStorage(
+                    workspace_dir=workspace_dir,
+                    db_path=str(self.workspace_dir / "lancedb")
+                )
+                self.logger.info("Vector storage (Step 6) initialized for automatic persistence")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize vector storage: {e}")
         
         self.logger.info(f"Initialized Step 5 with alpha={alpha}, beta={beta}, top_k={top_k}")
     
@@ -152,6 +174,10 @@ class Step5RelevanceScoring:
             # Save results
             self._save_results(results)
             
+            # Step 6: Automatically store in vector database
+            if self.auto_store_vectors and self.vector_storage:
+                self._store_results_in_vector_db(relevance_scores, problem_description)
+            
             self.logger.info(f"Step 5 completed in {processing_time:.2f}s. "
                            f"Top score: {relevance_scores[0].total_score:.4f}")
             
@@ -243,6 +269,64 @@ class Step5RelevanceScoring:
             
         except Exception as e:
             self.logger.warning(f"Failed to save results: {e}")
+    
+    def _store_results_in_vector_db(self, relevance_scores: List[RelevanceScore], problem_description: str):
+        """
+        Store KGCompass results in LanceDB for retrieval
+        
+        Args:
+            relevance_scores: List of scored entities
+            problem_description: Original problem description
+        """
+        try:
+            self.logger.info(f"Storing {len(relevance_scores)} scored entities in LanceDB...")
+            
+            # Prepare embeddings dictionary for storage
+            embeddings_to_store = {}
+            
+            for score in relevance_scores:
+                # Get the entity's embedding from cache/generator
+                entity_text = self.embedding_generator.prepare_code_entity_text({
+                    'name': score.entity_name,
+                    'type': score.entity_type,
+                    'file_path': score.file_path
+                })
+                
+                # Get embedding (will use cache if available)
+                embedding = self.embedding_generator.generate_embedding(entity_text)
+                
+                # Prepare storage record
+                embeddings_to_store[score.entity_id] = {
+                    'embedding': embedding.tolist() if hasattr(embedding, 'tolist') else embedding,
+                    'metadata': {
+                        'entity_name': score.entity_name,
+                        'entity_type': score.entity_type,
+                        'file_path': score.file_path,
+                        'line_start': 0,
+                        'line_end': 0,
+                        'relevance_score': float(score.total_score),
+                        'semantic_similarity': float(score.semantic_similarity),
+                        'textual_similarity': float(score.textual_similarity),
+                        'path_length': float(score.path_length),
+                        'path_decay_factor': float(score.path_decay_factor),
+                        'code_snippet': entity_text[:500],  # First 500 chars
+                        'created_at': time.time(),
+                        'problem_description': problem_description[:200],  # Store query context
+                        'kgcompass_scored': True
+                    }
+                }
+            
+            # Store in LanceDB
+            result = self.vector_storage.store_embeddings(embeddings_to_store)
+            
+            if result.get('success'):
+                stored_count = result.get('vectors_stored', 0)
+                self.logger.info(f"✅ Successfully stored {stored_count} KGCompass results in LanceDB")
+            else:
+                self.logger.warning(f"Vector storage returned: {result}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store results in vector DB: {e}", exc_info=True)
     
     def _create_error_result(self, error_message: str) -> Dict:
         """Create error result dictionary"""

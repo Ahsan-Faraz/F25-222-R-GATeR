@@ -1437,6 +1437,64 @@
                 <div id="kuzu-content" style="margin-top: 20px;"></div>
             </div>
 
+            <!-- Vector Database (Step 6) -->
+            <div id="vector-db-section" class="card hidden slide-up">
+                <h2>
+                    <i class="fas fa-database"></i>
+                    Vector Database & Semantic Search (Step 6)
+                </h2>
+                
+                <div class="info-box" style="margin-bottom: 20px; padding: 15px; background: rgba(162, 123, 92, 0.1); border-radius: 8px; border-left: 4px solid var(--color-accent);">
+                    <p><strong>LanceDB Vector Storage:</strong> Search KGCompass-scored entities using semantic similarity</p>
+                    <p style="margin-top: 8px; font-size: 0.9em; color: var(--text-muted);">
+                        Entities are automatically stored when running Step 5 (KGCompass relevance scoring). Use the search below to find relevant code.
+                    </p>
+                </div>
+
+                <!-- Vector Database Actions -->
+                <div class="actions" style="margin-bottom: 25px;">
+                    <button onclick="getVectorStats()" class="btn btn-primary">
+                        <i class="fas fa-chart-bar"></i> View Vector Stats
+                    </button>
+                    <button onclick="storeKGEntitiesInVector()" class="btn btn-secondary">
+                        <i class="fas fa-info-circle"></i> Storage Info
+                    </button>
+                </div>
+
+                <!-- Semantic Search -->
+                <div class="vector-search-section" style="margin-bottom: 25px; padding: 20px; background: rgba(47, 54, 64, 0.05); border-radius: 12px;">
+                    <h3 style="margin-bottom: 15px; color: var(--color-primary);">
+                        <i class="fas fa-search"></i> Semantic Search
+                    </h3>
+                    
+                    <div class="input-group" style="margin-bottom: 15px;">
+                        <textarea 
+                            id="vector-search-query" 
+                            placeholder="Enter query for semantic search (e.g., 'function that handles user authentication', 'error handling code', 'database connection')"
+                            style="width: 100%; height: 80px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical; font-family: inherit;"
+                        ></textarea>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+                        <label for="search-top-k" style="font-weight: 600;">Results:</label>
+                        <select id="search-top-k" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                            <option value="5">Top 5</option>
+                            <option value="10" selected>Top 10</option>
+                            <option value="20">Top 20</option>
+                        </select>
+                        <button onclick="performSemanticSearch()" class="btn btn-accent" style="margin-left: auto;">
+                            <i class="fas fa-brain"></i> Search
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search Results -->
+                <div id="vector-search-results" style="margin-bottom: 20px;"></div>
+
+                <!-- Vector Database Stats -->
+                <div id="vector-stats" style="margin-top: 20px;"></div>
+            </div>
+
             <!-- Export Data -->
             <div class="card slide-up">
                 <h2>
@@ -1534,6 +1592,12 @@
         } catch (e) {
             console.warn('Failed to parse repo status:', e);
             repoStatus = {};
+        }
+
+        // Authentication helper function
+        function isAuthenticated() {
+            // Check if user is authenticated based on Flask template variable
+            return {{ 'true' if authenticated else 'false' }};
         }
 
         // Auto-refresh indicator
@@ -2017,6 +2081,9 @@
             
             // Show knowledge graph visualization section
             showKnowledgeGraphSection();
+            
+            // Also show Vector Database section
+            showVectorDBSection();
         }
 
         async function loadStats() {
@@ -3460,6 +3527,320 @@
             const statusElement = document.getElementById('status');
             if (statusElement && statusElement.textContent.includes('Repository loaded')) {
                 showKGCompassSection();
+            }
+        }
+
+        // ===== VECTOR DATABASE FUNCTIONS =====
+        
+        function showVectorDBSection() {
+            const section = document.getElementById('vector-db-section');
+            if (section) {
+                section.classList.remove('hidden');
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function storeKGEntitiesInVector() {
+            if (!isAuthenticated()) {
+                showAlert('Please log in to view storage information', 'warning');
+                return;
+            }
+
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            btn.disabled = true;
+
+            fetch('/vectors/store_kg_entities', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Display info message
+                    const resultsHtml = `
+                        <div class="vector-storage-results" style="margin-top: 20px; padding: 15px; background: rgba(162, 123, 92, 0.1); border-radius: 8px;">
+                            <h4><i class="fas fa-info-circle"></i> Automatic Storage Info</h4>
+                            <div style="margin-top: 10px; color: var(--text-muted);">
+                                <p>${data.message}</p>
+                                <p style="margin-top: 10px;"><strong>Current Vector Count:</strong> ${data.stored_count}</p>
+                                <p style="margin-top: 5px; font-size: 0.9em;">
+                                    <i class="fas fa-lightbulb"></i> To populate the vector database, run Step 5 (KGCompass Relevance Scoring) with the "Store in Vector DB" option enabled.
+                                </p>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('vector-stats').innerHTML = resultsHtml;
+                    
+                    showAlert(data.message, 'info');
+                } else {
+                    showAlert(data.error || 'Failed to get storage information', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error getting storage info:', error);
+                showAlert('Error getting storage info: ' + error.message, 'error');
+            })
+            .finally(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            });
+        }
+
+        function performSemanticSearch() {
+            const query = document.getElementById('vector-search-query').value.trim();
+            if (!query) {
+                showAlert('Please enter a search query', 'warning');
+                return;
+            }
+
+            if (!isAuthenticated()) {
+                showAlert('Please log in to perform semantic search', 'warning');
+                return;
+            }
+
+            const topK = document.getElementById('search-top-k').value;
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching...';
+            btn.disabled = true;
+
+            fetch('/vectors/search_entity', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    query: query,
+                    top_k: parseInt(topK)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.results) {
+                    displayVectorSearchResults(data);
+                    showAlert(`Found ${data.total_found} similar entities`, 'success');
+                } else {
+                    showAlert(data.error || 'No similar entities found', 'warning');
+                    document.getElementById('vector-search-results').innerHTML = `
+                        <div class="no-results" style="text-align: center; padding: 20px; color: var(--text-muted);">
+                            <i class="fas fa-search" style="font-size: 2em; margin-bottom: 10px;"></i>
+                            <p>No similar entities found for "${query}"</p>
+                            <p style="font-size: 0.9em;">Try a different search query or store more entities first.</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error performing search:', error);
+                showAlert('Error performing search: ' + error.message, 'error');
+            })
+            .finally(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            });
+        }
+
+        function displayVectorSearchResults(data) {
+            const resultsContainer = document.getElementById('vector-search-results');
+            
+            if (!data.results || data.results.length === 0) {
+                resultsContainer.innerHTML = '<p style="color: var(--text-muted);">No results found</p>';
+                return;
+            }
+
+            let html = `
+                <div class="search-results-header" style="margin-bottom: 15px;">
+                    <h4><i class="fas fa-brain"></i> Semantic Search Results for "${data.query}"</h4>
+                    <p style="color: var(--text-muted); font-size: 0.9em;">Found ${data.total_found} similar entities</p>
+                </div>
+                <div class="search-results-list">
+            `;
+
+            data.results.forEach((result, index) => {
+                const score = result.similarity_score || result.semantic_similarity || 0;
+                const scorePercent = (score * 100).toFixed(1);
+                
+                html += `
+                    <div class="search-result-item" style="
+                        margin-bottom: 15px; 
+                        padding: 15px; 
+                        border: 2px solid #e5e7eb; 
+                        border-radius: 8px;
+                        background: ${index % 2 === 0 ? '#ffffff' : 'rgba(162, 123, 92, 0.05)'}
+                    ">
+                        <div class="result-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <h5 style="margin: 0; color: var(--color-primary);">
+                                <i class="fas fa-${getEntityIcon(result.entity_type)}"></i>
+                                ${result.entity_name || result.name || 'Unnamed Entity'}
+                            </h5>
+                            <span class="similarity-score" style="
+                                background: ${getScoreColor(score)};
+                                color: white;
+                                padding: 4px 8px;
+                                border-radius: 12px;
+                                font-size: 0.8em;
+                                font-weight: bold;
+                            ">${scorePercent}%</span>
+                        </div>
+                        
+                        <div class="result-details">
+                            <p><strong>Type:</strong> ${result.entity_type || 'Unknown'}</p>
+                            <p><strong>File:</strong> ${result.file_path || 'N/A'}</p>
+                            ${result.line_start ? `<p><strong>Lines:</strong> ${result.line_start}-${result.line_end || result.line_start}</p>` : ''}
+                            ${result.code_snippet ? `
+                                <div style="margin-top: 10px;">
+                                    <strong>Code:</strong>
+                                    <pre style="
+                                        background: rgba(0,0,0,0.05);
+                                        padding: 10px;
+                                        border-radius: 6px;
+                                        font-size: 0.9em;
+                                        overflow-x: auto;
+                                        white-space: pre-wrap;
+                                        margin-top: 5px;
+                                    ">${result.code_snippet}</pre>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            resultsContainer.innerHTML = html;
+        }
+
+        function getEntityIcon(type) {
+            switch (type?.toLowerCase()) {
+                case 'function': return 'function';
+                case 'class': return 'cube';
+                case 'variable': return 'variable';
+                case 'file': return 'file-code';
+                case 'method': return 'cogs';
+                default: return 'code';
+            }
+        }
+
+        function getScoreColor(score) {
+            if (score >= 0.8) return '#22c55e'; // Green
+            if (score >= 0.6) return '#f59e0b'; // Orange  
+            if (score >= 0.4) return '#ef4444'; // Red
+            return '#6b7280'; // Gray
+        }
+
+        function getVectorStats() {
+            if (!isAuthenticated()) {
+                showAlert('Please log in to view vector statistics', 'warning');
+                return;
+            }
+
+            fetch('/vectors/stats')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showAlert('Error loading vector stats: ' + data.error, 'error');
+                        return;
+                    }
+
+                    // Build data table HTML if we have vector data
+                    let dataTableHtml = '';
+                    if (data.vectors_data && data.vectors_data.length > 0) {
+                        dataTableHtml = `
+                            <div style="margin-top: 25px;">
+                                <h4 style="margin-bottom: 15px; color: var(--color-primary);">
+                                    <i class="fas fa-table"></i> Stored Vectors (Showing ${data.data_count} of ${data.total_vectors})
+                                </h4>
+                                <div style="overflow-x: auto; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                        <thead>
+                                            <tr style="background: var(--color-secondary); color: white;">
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">#</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Entity Name</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Type</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">File Path</th>
+                                                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">Relevance</th>
+                                                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">Semantic</th>
+                                                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">Textual</th>
+                                                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">Embedding</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${data.vectors_data.map((item, index) => `
+                                                <tr style="border-bottom: 1px solid #e5e7eb; ${index % 2 === 0 ? 'background: #f9fafb;' : ''}">
+                                                    <td style="padding: 10px;">${index + 1}</td>
+                                                    <td style="padding: 10px; font-weight: 600; color: var(--color-primary);">${item.entity_name}</td>
+                                                    <td style="padding: 10px;">
+                                                        <span style="padding: 4px 8px; border-radius: 4px; font-size: 0.85em; background: ${item.entity_type === 'function' ? '#dbeafe' : item.entity_type === 'class' ? '#fce7f3' : '#e0e7ff'}; color: ${item.entity_type === 'function' ? '#1e40af' : item.entity_type === 'class' ? '#9f1239' : '#3730a3'};">
+                                                            ${item.entity_type}
+                                                        </span>
+                                                    </td>
+                                                    <td style="padding: 10px; font-family: monospace; font-size: 0.85em;">${item.file_path}</td>
+                                                    <td style="padding: 10px; text-align: center; font-weight: 600; color: #059669;">${item.relevance_score.toFixed(4)}</td>
+                                                    <td style="padding: 10px; text-align: center;">${item.semantic_similarity.toFixed(4)}</td>
+                                                    <td style="padding: 10px; text-align: center;">${item.textual_similarity.toFixed(4)}</td>
+                                                    <td style="padding: 10px; text-align: center; color: var(--text-muted);">${item.embedding_dims}d</td>
+                                                    <td style="padding: 10px;">
+                                                        <button onclick="showVectorDetails('${item.entity_id}')" 
+                                                                style="padding: 4px 8px; background: var(--color-accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                                            <i class="fas fa-eye"></i> View
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    const statsHtml = `
+                        <div class="vector-stats-display" style="margin-top: 20px; padding: 15px; background: rgba(47, 54, 64, 0.05); border-radius: 8px;">
+                            <h4><i class="fas fa-chart-bar"></i> Vector Database Statistics</h4>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+                                <div class="stat-card" style="text-align: center; padding: 15px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                    <div style="font-size: 2em; font-weight: bold; color: var(--color-accent);">${data.total_vectors || 0}</div>
+                                    <div style="font-size: 0.9em; color: var(--text-muted);">Total Vectors</div>
+                                </div>
+                                <div class="stat-card" style="text-align: center; padding: 15px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                    <div style="font-size: 2em; font-weight: bold; color: var(--color-primary);">${data.table_count || 0}</div>
+                                    <div style="font-size: 0.9em; color: var(--text-muted);">Tables</div>
+                                </div>
+                                <div class="stat-card" style="text-align: center; padding: 15px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: ${data.status === 'available' ? 'var(--color-success)' : 'var(--color-error)'};">${data.status || 'Unknown'}</div>
+                                    <div style="font-size: 0.9em; color: var(--text-muted);">Status</div>
+                                </div>
+                            </div>
+                            ${data.tables && data.tables.length > 0 ? `
+                                <div style="margin-top: 15px;">
+                                    <strong>Tables:</strong> ${data.tables.join(', ')}
+                                </div>
+                            ` : ''}
+                            ${dataTableHtml}
+                        </div>
+                    `;
+                    
+                    document.getElementById('vector-stats').innerHTML = statsHtml;
+                })
+                .catch(error => {
+                    console.error('Error loading vector stats:', error);
+                    showAlert('Error loading vector stats: ' + error.message, 'error');
+                });
+        }
+
+        function showVectorDetails(entityId) {
+            // Placeholder for showing detailed view of a vector entry
+            showAlert('Vector details view coming soon for: ' + entityId, 'info');
+        }
+
+        function showVectorDBSectionIfReady() {
+            if (currentRepoData && currentRepoData.status === 'analyzed') {
+                showVectorDBSection();
             }
         }
     </script>

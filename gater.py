@@ -111,6 +111,10 @@ class GATeRAnalyzer:
         from src.relevance.step5_relevance_scoring import Step5RelevanceScoring
         self.relevance_scorer = Step5RelevanceScoring(workspace_dir=self.workspace_dir)
         
+        # Initialize Step 6: Vector Storage (LanceDB)
+        from src.vector_storage.step6_vector_storage import Step6VectorStorage
+        self.vector_storage = Step6VectorStorage(workspace_dir=self.workspace_dir)
+        
         # Ensure directories exist
         for directory in [self.workspace_dir, self.data_dir, self.repos_dir]:
             os.makedirs(directory, exist_ok=True)
