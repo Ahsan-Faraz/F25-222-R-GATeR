@@ -113,6 +113,9 @@ class RelevanceScorer:
                 edges_to_remove = list(graph.edges(starting_node_id))
                 graph.remove_edges_from(edges_to_remove)
                 graph.remove_node(starting_node_id)
+            
+            # Use max_path_length + 1 instead of Infinity for JSON serialization
+            safe_path_length = self.max_path_length + 1 if path_length == float('inf') else path_length
                 
             return RelevanceScore(
                 entity_id=entity_id,
@@ -121,7 +124,7 @@ class RelevanceScorer:
                 total_score=0.0,
                 semantic_similarity=0.0,
                 textual_similarity=0.0,
-                path_length=path_length,
+                path_length=safe_path_length,
                 path_decay_factor=0.0,
                 path_info={},
                 file_path=candidate_entity.get('file_path', '')

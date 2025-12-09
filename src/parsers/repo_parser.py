@@ -5,6 +5,7 @@ Handles cloning repositories and extracting GitHub artifacts
 
 import os
 import logging
+import json
 from typing import Dict, List, Optional
 from pathlib import Path
 import git
@@ -133,6 +134,9 @@ class RepositoryParser:
                 }
             }
             
+            # Save PRs and Issues to separate files for easier access
+            self._save_artifacts(repo_owner, repo_name, pulls, issues)
+            
             logger.info(f"SUCCESS: GitHub extraction completed:")
             logger.info(f"   PRs: {len(pulls)}/{total_pulls}")
             logger.info(f"   Issues: {len(issues)}/{total_issues}")
@@ -203,14 +207,23 @@ class RepositoryParser:
         return pulls
     
     def _extract_issues(self, repo) -> List[Dict]:
-        """Extract issue information with rate limiting"""
+        """Extract issue information with rate limiting and timeout"""
         issues = []
         max_issues = int(os.getenv('MAX_ISSUES_EXTRACT', '200'))  # Configurable limit
         
         try:
+            import time
+            start_time = time.time()
+            timeout_seconds = 120  # 2 minute timeout
+            
             # Get issues with limit to avoid excessive API calls
             issue_count = 0
             for issue in repo.get_issues(state='all', sort='updated', direction='desc'):
+                
+                # Check timeout
+                if time.time() - start_time > timeout_seconds:
+                    logger.warning(f"Issue extraction timeout after {timeout_seconds}s, extracted {issue_count} issues")
+                    break
                     
                 # Skip pull requests (they appear as issues in GitHub API)
                 if issue.pull_request:
@@ -233,6 +246,10 @@ class RepositoryParser:
                     issues.append(issue_data)
                     issue_count += 1
                     
+                    # Log progress every 25 issues
+                    if issue_count % 25 == 0:
+                        logger.info(f"Extracted {issue_count} issues so far...")
+                    
                     # Respect rate limit
                     if issue_count >= max_issues:
                         logger.info(f"Reached issue extraction limit ({max_issues}), stopping")
@@ -241,6 +258,8 @@ class RepositoryParser:
                 except Exception as issue_error:
                     logger.warning(f"Error processing issue #{issue.number}: {issue_error}")
                     continue
+            
+            logger.info(f"Completed issue extraction: {issue_count} issues extracted")
                 
         except Exception as e:
             logger.error(f"Error extracting issues: {e}")
@@ -248,14 +267,23 @@ class RepositoryParser:
         return issues
     
     def _extract_commits(self, repo) -> List[Dict]:
-        """Extract commit information with rate limiting"""
+        """Extract commit information with rate limiting and timeout"""
         commits = []
         max_commits = int(os.getenv('MAX_COMMITS_EXTRACT', '100'))  # Configurable limit
         
         try:
+            import time
+            start_time = time.time()
+            timeout_seconds = 60  # 1 minute timeout for commits
+            
             # Get commits with limit to avoid excessive API calls
             commit_count = 0
             for commit in repo.get_commits():
+                
+                # Check timeout
+                if time.time() - start_time > timeout_seconds:
+                    logger.warning(f"Commit extraction timeout after {timeout_seconds}s, extracted {commit_count} commits")
+                    break
                 
                 try:
                     commit_data = {
@@ -274,6 +302,10 @@ class RepositoryParser:
                     commits.append(commit_data)
                     commit_count += 1
                     
+                    # Log progress every 25 commits
+                    if commit_count % 25 == 0:
+                        logger.info(f"Extracted {commit_count} commits so far...")
+                    
                     # Respect rate limit
                     if commit_count >= max_commits:
                         logger.info(f"Reached commit extraction limit ({max_commits}), stopping")
@@ -287,6 +319,28 @@ class RepositoryParser:
             logger.error(f"Error extracting commits: {e}")
         
         return commits
+    
+    def _save_artifacts(self, repo_owner: str, repo_name: str, pulls: List[Dict], issues: List[Dict]):
+        """Save PRs and Issues to separate JSON files for easier access"""
+        try:
+            # Create data directory if it doesn't exist
+            data_dir = Path('workspace/data')
+            data_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save PRs
+            pr_file = data_dir / f'{repo_owner}_{repo_name}_pull_requests.json'
+            with open(pr_file, 'w', encoding='utf-8') as f:
+                json.dump(pulls, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved {len(pulls)} PRs to {pr_file}")
+            
+            # Save Issues
+            issue_file = data_dir / f'{repo_owner}_{repo_name}_issues.json'
+            with open(issue_file, 'w', encoding='utf-8') as f:
+                json.dump(issues, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved {len(issues)} issues to {issue_file}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to save artifacts to files: {e}")
     
     def _get_pr_files(self, pr) -> List[str]:
         """Get list of files changed in a pull request"""

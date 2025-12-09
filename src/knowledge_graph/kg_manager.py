@@ -36,7 +36,7 @@ class KnowledgeGraphManager:
     Supports incremental updates and persistence
     """
     
-    def __init__(self, kuzu_db_path: Optional[str] = None, kuzu_buffer_size: int = 4294967296):
+    def __init__(self, kuzu_db_path: Optional[str] = None, kuzu_buffer_size: int = 4294967296, auto_load: bool = True):
         self.graph = nx.DiGraph()
         self.entity_index = {}  # Quick lookup: entity_name -> node_id
         self.relationship_types = {
@@ -50,9 +50,67 @@ class KnowledgeGraphManager:
             self.kuzu_manager = KuzuManager(kuzu_db_path, kuzu_buffer_size)
             if self.kuzu_manager.connect():
                 logger.info("SUCCESS: Kuzu database integration enabled")
+                # Auto-load entities from Kuzu into NetworkX graph
+                if auto_load:
+                    self._load_from_kuzu()
             else:
                 logger.warning("WARNING: Kuzu database connection failed, using in-memory only")
                 self.kuzu_manager = None
+    
+    def _load_from_kuzu(self):
+        """Load entities and relationships from Kuzu database into NetworkX graph"""
+        if not self.kuzu_manager:
+            return
+            
+        try:
+            # Get stats to know what we're loading
+            stats = self.kuzu_manager.get_stats()
+            total_nodes = stats.get('total_nodes', 0)
+            total_rels = stats.get('total_relationships', 0)
+            logger.info(f"Loading {total_nodes} entities and {total_rels} relationships from Kuzu...")
+            
+            # Load all nodes (use a high limit to get all)
+            nodes = self.kuzu_manager.get_all_nodes(limit=10000)
+            for node_info in nodes:
+                table = node_info.get('table', 'unknown')
+                data = node_info.get('data', {})
+                
+                # Extract entity ID
+                entity_id = data.get('id', data.get('entity_id', str(id(data))))
+                
+                # Add to NetworkX graph
+                node_attrs = {
+                    'type': table,
+                    'name': data.get('name', entity_id),
+                    'file_path': data.get('file_path', ''),
+                    'code_snippet': data.get('code_snippet', ''),
+                    **data
+                }
+                self.graph.add_node(entity_id, **node_attrs)
+                
+                # Update entity index
+                entity_name = node_attrs.get('name', '')
+                if entity_name:
+                    if entity_name not in self.entity_index:
+                        self.entity_index[entity_name] = []
+                    if entity_id not in self.entity_index[entity_name]:
+                        self.entity_index[entity_name].append(entity_id)
+            
+            # Load all relationships
+            relationships = self.kuzu_manager.get_all_relationships(limit=50000)
+            for rel_info in relationships:
+                source = rel_info.get('source')
+                target = rel_info.get('target')
+                rel_type = rel_info.get('type', 'RELATES_TO')
+                properties = rel_info.get('properties', {})
+                
+                if source and target:
+                    self.graph.add_edge(source, target, relationship_type=rel_type, **properties)
+            
+            logger.info(f"SUCCESS: Loaded {self.graph.number_of_nodes()} entities, {self.graph.number_of_edges()} relationships from Kuzu")
+            
+        except Exception as e:
+            logger.error(f"ERROR: Failed to load from Kuzu: {e}")
         
     def add_entities(self, entities: List[Dict]) -> int:
         """Add entities as nodes to the graph"""

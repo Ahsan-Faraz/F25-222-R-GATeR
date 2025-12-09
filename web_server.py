@@ -6,6 +6,7 @@ Flask web server with GitHub OAuth integration and incremental analysis
 import os
 import logging
 import json
+import time
 import numpy as np
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
@@ -19,6 +20,9 @@ os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 # Import GATeR components
 from gater import GATeRAnalyzer
 from src.incremental_manager import IncrementalAnalysisManager
+from src.vector_storage import LanceManager, VectorIndexer, EmbeddingSync
+from src.vector_storage.step6_vector_storage import Step6VectorStorage
+from src.vector_storage.lightweight_vector_storage import LightweightVectorStorage
 
 # Load environment variables
 load_dotenv()
@@ -34,14 +38,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger('gater.web_server')
 
+import math
+
 def convert_numpy_types(obj):
-    """Convert numpy types to Python native types for JSON serialization"""
+    """Convert numpy types to Python native types for JSON serialization.
+    Also handles Infinity and NaN values which are not valid JSON."""
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
-        return float(obj)
+        val = float(obj)
+        # Handle Infinity and NaN - not valid in JSON
+        if math.isinf(val):
+            return None  # or use a large number like 999999
+        elif math.isnan(val):
+            return None
+        return val
+    elif isinstance(obj, float):
+        # Handle Python float Infinity and NaN
+        if math.isinf(obj):
+            return None  # or use a large number like 999999
+        elif math.isnan(obj):
+            return None
+        return obj
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        return [convert_numpy_types(item) for item in obj.tolist()]
     elif isinstance(obj, dict):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
@@ -71,6 +91,31 @@ GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 gater = GATeRAnalyzer()
 incremental_manager = IncrementalAnalysisManager(gater)
 
+# Initialize Vector Storage (Step 6) with fallback
+step6_vector_storage = None
+try:
+    logger.info("Attempting to initialize standard vector storage...")
+    lance_manager = LanceManager(db_path=os.getenv('LANCEDB_PATH', 'workspace/lancedb'))
+    vector_indexer = VectorIndexer(lance_manager)
+    embedding_sync = EmbeddingSync(lance_manager, vector_indexer)
+    step6_vector_storage = Step6VectorStorage(db_path=os.getenv('LANCEDB_PATH', 'workspace/lancedb'))
+    logger.info("SUCCESS: Vector storage initialized successfully")
+except Exception as e:
+    logger.warning(f"Standard vector storage failed: {e}")
+    logger.info("🔄 Trying lightweight vector storage as fallback...")
+    try:
+        step6_vector_storage = LightweightVectorStorage(db_path=os.getenv('LANCEDB_PATH', 'workspace/lancedb'))
+        logger.info("SUCCESS: Lightweight vector storage initialized successfully")
+    except Exception as e2:
+        logger.error(f"❌ Both vector storage methods failed: {e2}")
+        lance_manager = None
+        vector_indexer = None
+        embedding_sync = None
+        step6_vector_storage = None
+
+# Global storage for vector search results
+vector_search_results = {}
+
 # Add cleanup handler
 import atexit
 def cleanup_gater():
@@ -78,6 +123,8 @@ def cleanup_gater():
     try:
         if gater and gater.kg_manager and gater.kg_manager.kuzu_manager:
             gater.kg_manager.kuzu_manager.disconnect()
+        if lance_manager:
+            lance_manager.close()
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
 
@@ -192,6 +239,22 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
+@app.route('/auth/dev-login')
+def dev_login():
+    """Development login for testing (no OAuth required)"""
+    if os.getenv('DEV_MODE', 'false').lower() == 'true':
+        # Set up a development session
+        session['oauth_token'] = {'access_token': 'dev_token'}
+        session['user'] = {
+            'login': 'dev_user',
+            'name': 'Development User',
+            'id': 12345
+        }
+        logger.info("Development user authenticated")
+        return redirect(url_for('index'))
+    else:
+        return jsonify({'error': 'Development mode not enabled'}), 403
+
 @app.route('/repo/add', methods=['POST'])
 def add_repository():
     """Add a repository for analysis"""
@@ -284,6 +347,23 @@ def analyze_repository():
             skip_github_artifacts=skip_github_artifacts,
             progress_callback=update_progress
         )
+        
+        # Step 6: Sync embeddings to LanceDB (automatic after analysis)
+        update_progress(6, "Vector Embeddings", "Syncing entities to LanceDB for semantic search")
+        try:
+            if lance_manager and lance_manager.is_available() and embedding_sync:
+                sync_result = embedding_sync.sync_from_knowledge_graph(
+                    gater.kg_manager,
+                    gater.relevance_scorer
+                )
+                logger.info(f"Vector sync completed: {sync_result.get('vectors_synced', 0)} vectors")
+                results['vector_sync'] = sync_result
+            else:
+                logger.warning("LanceDB not available, skipping vector sync")
+                results['vector_sync'] = {'success': False, 'error': 'LanceDB not available'}
+        except Exception as sync_error:
+            logger.error(f"Error syncing vectors: {sync_error}")
+            results['vector_sync'] = {'success': False, 'error': str(sync_error)}
         
         app_state['analysis_status'] = 'completed'
         app_state['last_analysis'] = {
@@ -850,6 +930,701 @@ def parse_repo_url(url):
         
     except Exception:
         return None, None
+
+# ========== Vector Storage Endpoints (Step 6) ==========
+
+@app.route('/vectors/sync', methods=['POST'])
+def sync_vectors():
+    """
+    Sync embeddings from knowledge graph to LanceDB
+    POST /vectors/sync
+    Body: { "full_sync": true/false }
+    """
+    if not is_authenticated():
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    if not lance_manager or not lance_manager.is_available():
+        return jsonify({
+            'success': False,
+            'error': 'Vector storage not available',
+            'message': 'LanceDB is not installed or configured'
+        }), 503
+    
+    try:
+        data = request.get_json() or {}
+        full_sync = data.get('full_sync', True)
+        
+        if full_sync:
+            # Full sync from knowledge graph
+            logger.info("Starting full vector sync")
+            result = embedding_sync.sync_from_knowledge_graph(
+                gater.kg_manager,
+                gater.relevance_scorer
+            )
+        else:
+            # Incremental sync (not yet implemented)
+            return jsonify({
+                'success': False,
+                'error': 'Incremental sync not yet implemented'
+            }), 400
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error syncing vectors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/vectors/search', methods=['POST'])
+def search_vectors():
+    """
+    Semantic search in vector database
+    POST /vectors/search
+    Body: { 
+        "query": "problem description", 
+        "top_k": 20,
+        "filters": {"entity_type": ["function", "method"]},
+        "use_hybrid": true
+    }
+    """
+    if not is_authenticated():
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    if not lance_manager or not lance_manager.is_available():
+        return jsonify({
+            'success': False,
+            'error': 'Vector storage not available'
+        }), 503
+    
+    try:
+        data = request.get_json()
+        query_text = data.get('query', '').strip()
+        top_k = data.get('top_k', 20)
+        filters = data.get('filters', {})
+        use_hybrid = data.get('use_hybrid', True)
+        
+        if not query_text:
+            return jsonify({'error': 'Query text is required'}), 400
+        
+        # Generate query embedding
+        query_embedding = gater.relevance_scorer.embedding_generator.generate_embedding(query_text)
+        
+        # Perform search
+        if use_hybrid and filters:
+            # Hybrid search with filters
+            results = vector_indexer.search_with_filters(
+                table_name="code_entity_embeddings",
+                query_vector=query_embedding,
+                filters=filters,
+                top_k=top_k
+            )
+        elif use_hybrid:
+            # Hybrid search with relevance boosting
+            results = vector_indexer.hybrid_search(
+                table_name="code_entity_embeddings",
+                query_vector=query_embedding,
+                top_k=top_k,
+                boost_relevance=0.3
+            )
+        else:
+            # Standard vector search
+            results = lance_manager.search_vectors(
+                table_name="code_entity_embeddings",
+                query_vector=query_embedding,
+                top_k=top_k
+            )
+        
+        # Convert numpy types
+        results = convert_numpy_types(results)
+        
+        return jsonify({
+            'success': True,
+            'query': query_text,
+            'total_results': len(results),
+            'results': results
+        })
+        
+    except Exception as e:
+        logger.error(f"Error searching vectors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/vectors/stats')
+def vector_stats():
+    """
+    Get vector database statistics
+    GET /vectors/stats
+    """
+    if not is_authenticated():
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    if not step6_vector_storage or not step6_vector_storage.is_available():
+        return jsonify({
+            'available': False,
+            'error': 'Vector storage not available'
+        })
+    
+    try:
+        # Get database stats from Step 6
+        db_stats = step6_vector_storage.get_database_stats()
+        
+        # Get detailed table stats if table exists
+        table_stats = None
+        vectors_data = []
+        
+        if 'code_entity_embeddings' in db_stats.get('tables', []):
+            table_stats = lance_manager.get_table_stats("code_entity_embeddings")
+            
+            # Get sample of stored vectors
+            try:
+                table = lance_manager.db.open_table("code_entity_embeddings")
+                df = table.to_pandas()
+                
+                # Limit to first 50 records for performance
+                df = df.head(50)
+                
+                # Convert to list of dicts, excluding embedding vectors (too large)
+                for _, row in df.iterrows():
+                    vectors_data.append({
+                        'entity_id': row.get('entity_id', ''),
+                        'entity_name': row.get('entity_name', ''),
+                        'entity_type': row.get('entity_type', ''),
+                        'file_path': row.get('file_path', ''),
+                        'line_start': int(row.get('line_start', 0)),
+                        'line_end': int(row.get('line_end', 0)),
+                        'relevance_score': float(row.get('relevance_score', 0)),
+                        'semantic_similarity': float(row.get('semantic_similarity', 0)),
+                        'textual_similarity': float(row.get('textual_similarity', 0)),
+                        'code_snippet': row.get('code_snippet', '')[:200],  # Truncate long snippets
+                        'created_at': str(row.get('created_at', '')),
+                        'embedding_dims': len(row.get('embedding', [])) if row.get('embedding') is not None else 0
+                    })
+            except Exception as e:
+                logger.warning(f"Could not retrieve vector data: {e}")
+        
+        return jsonify({
+            'success': True,
+            'available': True,
+            'total_vectors': db_stats.get('total_vectors', 0),
+            'table_count': db_stats.get('table_count', 0),
+            'tables': db_stats.get('tables', []),
+            'status': db_stats.get('status', 'unknown'),
+            'table_details': table_stats,
+            'vectors_data': vectors_data,
+            'data_count': len(vectors_data)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting vector stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/vectors/optimize', methods=['POST'])
+def optimize_vectors():
+    """
+    Optimize vector database (compact and rebuild index)
+    POST /vectors/optimize
+    """
+    if not is_authenticated():
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    if not lance_manager or not lance_manager.is_available():
+        return jsonify({
+            'success': False,
+            'error': 'Vector storage not available'
+        }), 503
+    
+    try:
+        # Optimize table
+        optimized = vector_indexer.optimize_table("code_entity_embeddings")
+        
+        # Rebuild index
+        indexed = vector_indexer.create_index("code_entity_embeddings")
+        
+        return jsonify({
+            'success': True,
+            'optimized': optimized,
+            'indexed': indexed,
+            'message': 'Vector database optimized successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error optimizing vectors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/vectors/clear', methods=['POST'])
+def clear_vectors():
+    """
+    Clear vector database
+    POST /vectors/clear
+    """
+    if not is_authenticated():
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    if not lance_manager or not lance_manager.is_available():
+        return jsonify({
+            'success': False,
+            'error': 'Vector storage not available'
+        }), 503
+    
+    try:
+        success = lance_manager.delete_table("code_entity_embeddings")
+        
+        return jsonify({
+            'success': success,
+            'message': 'Vector database cleared successfully' if success else 'Failed to clear'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error clearing vectors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Vector Storage API Endpoints (Step 6)
+
+@app.route('/vectors/store', methods=['POST'])
+def store_vectors():
+    """
+    Store embeddings in LanceDB
+    POST /vectors/store  
+    Body: { "sync_all": true/false }
+    """
+    try:
+        if not is_authenticated():
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json() or {}
+        sync_all = data.get('sync_all', False)
+        
+        # Use vector storage from gater
+        if hasattr(gater, 'vector_storage'):
+            if sync_all:
+                results = gater.vector_storage.store_embeddings()
+            else:
+                results = gater.vector_storage.incremental_sync()
+            
+            return jsonify({
+                'success': True,
+                'vectors_stored': results.get('vectors_stored', 0),
+                'processing_time': results.get('processing_time', 0)
+            })
+        else:
+            return jsonify({
+                'success': False, 
+                'error': 'Vector storage not initialized'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error storing vectors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# === NEW VECTOR DATABASE ENDPOINTS ===
+
+@app.route('/vectors/search_entity', methods=['POST'])
+def search_entity_vectors():
+    """Search stored KGCompass results using semantic similarity"""
+    try:
+        # Check authentication (allow bypass for development)
+        if not is_authenticated() and not os.getenv('DEV_MODE', 'false').lower() == 'true':
+            return jsonify({'error': 'Authentication required. Please login or set DEV_MODE=true'}), 401
+            
+        data = request.get_json()
+        if not data or 'query' not in data:
+            return jsonify({'error': 'Query parameter required'}), 400
+            
+        query = data['query']
+        top_k = data.get('top_k', 10)
+        
+        if not step6_vector_storage:
+            return jsonify({
+                'error': 'Vector storage not available',
+                'results': [],
+                'total_found': 0
+            }), 503
+        
+        # Search stored KGCompass results
+        logger.info(f"Searching KGCompass results for: '{query}'")
+        search_result = step6_vector_storage.search_similar_entities(query, top_k=top_k)
+        
+        if search_result['success']:
+            results = search_result.get('results', [])
+            
+            # Store results globally for display
+            search_id = f"search_{len(vector_search_results) + 1}"
+            vector_search_results[search_id] = {
+                'query': query,
+                'results': results,
+                'timestamp': datetime.now().isoformat(),
+                'total_found': len(results)
+            }
+            
+            logger.info(f"Found {len(results)} similar entities")
+            
+            return jsonify({
+                'success': True,
+                'search_id': search_id,
+                'query': query,
+                'results': results,
+                'total_found': len(results),
+                'message': f"Found {len(results)} KGCompass-scored entities"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'results': [],
+                'total_found': 0,
+                'error': search_result.get('message', 'No stored results found. Run KGCompass scoring first.')
+            })
+            
+    except Exception as e:
+        logger.error(f"Vector entity search error: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'results': [],
+            'error': str(e)
+        }), 500
+
+@app.route('/vectors/store_kg_entities', methods=['POST'])
+def store_kg_entities():
+    """
+    Retrieve stored KGCompass results from LanceDB
+    NOTE: Storage happens automatically after Step 5 KGCompass scoring
+    This endpoint just returns stats about what's stored
+    """
+    try:
+        # Check authentication (allow bypass for development)
+        if not is_authenticated() and not os.getenv('DEV_MODE', 'false').lower() == 'true':
+            return jsonify({'error': 'Authentication required. Please login or set DEV_MODE=true'}), 401
+            
+        if not step6_vector_storage:
+            return jsonify({
+                'error': 'Vector storage not available',
+                'stored_count': 0
+            }), 503
+        
+        # Get stats from LanceDB about stored KGCompass results
+        stats = step6_vector_storage.get_database_stats()
+        
+        return jsonify({
+            'success': True,
+            'message': 'KGCompass results are automatically stored after Step 5 scoring',
+            'stored_count': stats.get('total_vectors', 0),
+            'table_count': stats.get('table_count', 0),
+            'tables': stats.get('tables', []),
+            'status': stats.get('status', 'unknown'),
+            'note': 'Run KGCompass scoring to populate vector database'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving vector stats: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'stored_count': 0
+        }), 500
+
+@app.route('/vectors/search_results', methods=['GET'])
+def get_vector_search_results():
+    """Get stored vector search results for display"""
+    try:
+        # Check authentication
+        if 'access_token' not in session:
+            return jsonify({'error': 'Authentication required'}), 401
+            
+        search_id = request.args.get('search_id')
+        
+        if search_id and search_id in vector_search_results:
+            return jsonify(vector_search_results[search_id])
+        else:
+            return jsonify({
+                'all_searches': list(vector_search_results.keys()),
+                'total_searches': len(vector_search_results),
+                'recent_results': dict(list(vector_search_results.items())[-5:])  # Last 5 searches
+            })
+            
+    except Exception as e:
+        logger.error(f"Error retrieving search results: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ========== GATR - Graph-Aware Test Repair Endpoints ==========
+
+# Initialize GATR Engine
+gatr_engine = None
+try:
+    from src.gatr import GATREngine
+    gatr_engine = GATREngine(
+        kg_manager=gater.kg_manager if gater else None,
+        vector_storage=step6_vector_storage,
+        relevance_scorer=gater.relevance_scorer if hasattr(gater, 'relevance_scorer') else None
+    )
+    logger.info("SUCCESS: GATR Engine initialized successfully")
+except Exception as e:
+    logger.warning(f"⚠️ GATR Engine initialization failed: {e}")
+    gatr_engine = None
+
+# Store GATR repair results
+gatr_repair_results = {}
+
+
+@app.route('/gatr/repair', methods=['POST'])
+def gatr_repair_test():
+    """
+    GATR Test Repair Endpoint
+    Execute the complete GATR pipeline to repair a broken test
+    
+    POST /gatr/repair
+    Body: {
+        "test_name": "test_function_name",
+        "test_code": "def test_something():\n    ...",
+        "test_file": "tests/test_module.py",
+        "error_message": "AssertionError: expected X but got Y",
+        "test_class": "TestClassName" (optional)
+    }
+    """
+    try:
+        # GATR repair is available without authentication for development
+        # Authentication can be enforced in production by setting REQUIRE_AUTH=true
+        if os.getenv('REQUIRE_AUTH', 'false').lower() == 'true':
+            if not is_authenticated():
+                return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        # Validate required fields
+        test_name = data.get('test_name', '').strip()
+        test_code = data.get('test_code', '').strip()
+        error_message = data.get('error_message', '').strip()
+        project_name = data.get('project_name', '').strip() or 'default_project'
+        
+        if not test_name:
+            return jsonify({'error': 'test_name is required'}), 400
+        if not test_code:
+            return jsonify({'error': 'test_code is required'}), 400
+        if not error_message:
+            return jsonify({'error': 'error_message is required'}), 400
+        
+        # Check if GATR engine is available
+        if not gatr_engine:
+            return jsonify({
+                'success': False,
+                'error': 'GATR Engine not available. Please check server logs.'
+            }), 503
+        
+        logger.info(f"GATR: Starting repair for test: {test_name} (project: {project_name})")
+        
+        # Build broken test info
+        broken_test = {
+            'test_name': test_name,
+            'test_code': test_code,
+            'test_file': data.get('test_file', ''),
+            'test_class': data.get('test_class', ''),
+            'line_number': data.get('line_number')
+        }
+        
+        # Execute GATR repair pipeline with project name for saving
+        repair_result = gatr_engine.repair_test(broken_test, error_message, project_name=project_name)
+        
+        # Store result
+        repair_id = f"repair_{len(gatr_repair_results) + 1}_{int(time.time())}"
+        gatr_repair_results[repair_id] = {
+            'repair_id': repair_id,
+            'test_name': test_name,
+            'project_name': project_name,
+            'success': repair_result.success,
+            'repaired_code': repair_result.repaired_code,
+            'repair_strategy': repair_result.repair_strategy,
+            'confidence': repair_result.confidence,
+            'processing_time': repair_result.processing_time,
+            'context_summary': repair_result.context_summary,
+            'error_message': repair_result.error_message,
+            'diff_file_path': repair_result.diff_file_path,
+            'diff_content': repair_result.diff_content,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if repair_result.success:
+            logger.info(f"GATR: Repair successful for {test_name} (strategy: {repair_result.repair_strategy})")
+            response_data = {
+                'success': True,
+                'repair_id': repair_id,
+                'test_name': test_name,
+                'project_name': project_name,
+                'repaired_code': repair_result.repaired_code,
+                'repair_strategy': repair_result.repair_strategy,
+                'confidence': repair_result.confidence,
+                'processing_time': repair_result.processing_time,
+                'context_summary': repair_result.context_summary,
+                'pipeline_progress': repair_result.pipeline_progress,
+                'raw_context_details': repair_result.raw_context_details,
+                'compressed_context_details': repair_result.compressed_context_details,
+                'aggregated_context_details': repair_result.aggregated_context_details,
+                'diff_file_path': repair_result.diff_file_path,
+                'diff_content': repair_result.diff_content
+            }
+            return jsonify(convert_numpy_types(response_data))
+        else:
+            logger.warning(f"GATR: Repair failed for {test_name}: {repair_result.error_message}")
+            return jsonify({
+                'success': False,
+                'repair_id': repair_id,
+                'test_name': test_name,
+                'error': repair_result.error_message,
+                'processing_time': repair_result.processing_time
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"GATR repair error: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/gatr/context', methods=['POST'])
+def gatr_get_context():
+    """
+    Get GATR repair context without generating repair
+    Useful for debugging and understanding the repair process
+    
+    POST /gatr/context
+    Body: same as /gatr/repair
+    """
+    try:
+        # Check authentication
+        if not is_authenticated() and not os.getenv('DEV_MODE', 'false').lower() == 'true':
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        test_name = data.get('test_name', '').strip()
+        test_code = data.get('test_code', '').strip()
+        error_message = data.get('error_message', '').strip()
+        
+        if not gatr_engine:
+            return jsonify({
+                'success': False,
+                'error': 'GATR Engine not available'
+            }), 503
+        
+        broken_test = {
+            'test_name': test_name,
+            'test_code': test_code,
+            'test_file': data.get('test_file', ''),
+            'test_class': data.get('test_class', '')
+        }
+        
+        # Get context without repair
+        context = gatr_engine.get_repair_context(broken_test, error_message)
+        
+        return jsonify({
+            'success': True,
+            'test_name': test_name,
+            'context': convert_numpy_types(context)
+        })
+        
+    except Exception as e:
+        logger.error(f"GATR context error: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/gatr/results')
+def gatr_get_results():
+    """Get stored GATR repair results"""
+    try:
+        repair_id = request.args.get('repair_id')
+        
+        if repair_id and repair_id in gatr_repair_results:
+            return jsonify(gatr_repair_results[repair_id])
+        else:
+            # Return summary of all repairs
+            return jsonify({
+                'total_repairs': len(gatr_repair_results),
+                'successful_repairs': sum(1 for r in gatr_repair_results.values() if r.get('success')),
+                'recent_repairs': list(gatr_repair_results.values())[-10:]
+            })
+            
+    except Exception as e:
+        logger.error(f"Error retrieving GATR results: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/gatr/status')
+def gatr_status():
+    """Get GATR engine status including direct database connections and LLM (Ollama) status"""
+    if gatr_engine is None:
+        return jsonify({
+            'available': False,
+            'error': 'GATR Engine not initialized'
+        })
+    
+    # Get LLM status
+    llm_status = gatr_engine.get_llm_status()
+    
+    # Get direct database status
+    db_status = gatr_engine.get_database_status()
+    
+    return jsonify({
+        'available': True,
+        'kg_manager_available': gatr_engine.kg_manager is not None,
+        'vector_storage_available': gatr_engine.vector_storage is not None,
+        'relevance_scorer_available': gatr_engine.relevance_scorer is not None,
+        'total_repairs': len(gatr_repair_results),
+        'successful_repairs': sum(1 for r in gatr_repair_results.values() if r.get('success')),
+        'databases': {
+            'kuzu': {
+                'connected': db_status['kuzu']['connected'],
+                'path': db_status['kuzu']['path'],
+                'entities': db_status['kuzu']['entities'],
+                'edges': db_status['kuzu']['edges']
+            },
+            'lancedb': {
+                'connected': db_status['lancedb']['connected'],
+                'path': db_status['lancedb']['path'],
+                'embeddings': db_status['lancedb']['embeddings']
+            }
+        },
+        'llm': {
+            'provider': 'ollama',
+            'model': llm_status.get('ollama_model'),
+            'url': llm_status.get('ollama_url'),
+            'available': llm_status.get('available', False),
+            'target_model_available': llm_status.get('target_model_available', False),
+            'installed_models': llm_status.get('models', []),
+            'error': llm_status.get('error')
+        }
+    })
+
+
+@app.route('/gatr/llm/pull', methods=['POST'])
+def gatr_pull_model():
+    """
+    Pull/download an Ollama model
+    
+    POST /gatr/llm/pull
+    Body: {"model": "deepseek-coder:6.7b"} (optional, defaults to configured model)
+    """
+    try:
+        if gatr_engine is None:
+            return jsonify({'success': False, 'error': 'GATR Engine not available'}), 503
+        
+        data = request.get_json() or {}
+        model_name = data.get('model')
+        
+        result = gatr_engine.pull_model(model_name)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        logger.error(f"Error pulling model: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 # Template functions
 @app.template_global()
