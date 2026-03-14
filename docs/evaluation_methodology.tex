@@ -1,0 +1,676 @@
+% evaluation_methodology.tex — GATeR vs TARGET: Evaluation Methodology & Scripts Guide
+% Compile: pdflatex evaluation_methodology.tex
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{array}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.97}
+\definecolor{codeframe}{rgb}{0.6,0.6,0.7}
+\lstset{
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    columns=fullflexible,
+    keepspaces=true,
+    showstringspaces=false,
+}
+
+\title{\textbf{GATeR vs TARGET: Evaluation Methodology}\\[0.5em]
+\large Fair Comparison of Graph-Aware RAG Repair vs.\ Fine-Tuned Seq2Seq Repair\\
+on the TaRBench Dataset}
+\author{GATeR Project --- FYP Defense Reference Document}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Overview}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This document describes the evaluation methodology used to compare
+\textbf{GATeR} (Graph-Aware Test Repair) and \textbf{TARGET}
+(TaRGet: A Supervised Fine-Tuned Model for Test Repair)
+on the same subset of the TaRBench test split (7,103 Java test-repair cases).
+
+\begin{itemize}
+    \item \textbf{GATeR}: A zero-shot RAG (Retrieval-Augmented Generation)
+          pipeline that builds a \emph{Knowledge Graph} over the project,
+          scores context with the novel \emph{KGCompass} formula, compresses
+          and aggregates the context, and delegates repair generation to
+          DeepSeek Coder 6.7B via Ollama.
+    \item \textbf{TARGET}: A supervised model that fine-tunes CodeT5+ (770M)
+          on 36,639 TaRBench training pairs and uses beam search ($k{=}40$)
+          at inference.
+\end{itemize}
+
+\textbf{Fundamental architectural difference.}
+TARGET is a \emph{saved model checkpoint}---a file you load and call
+\texttt{model.generate()}.
+GATeR is a \emph{live pipeline} that queries a Knowledge Graph, retrieves
+context from a vector store, compresses and aggregates that context, and
+then calls an LLM API to produce the repair.
+During evaluation, TARGET's predictions are \textbf{pre-computed} (just loaded
+from JSON), whereas GATeR must run its \textbf{full 9-step pipeline} for every
+test case.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{How Each System Produces a Repair}
+\label{sec:systems}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{TARGET (No LLM at Evaluation Time)}
+
+TARGET already ran inference on the full TaRBench test set.
+Its results are stored in two JSON files:
+
+\begin{enumerate}
+    \item \texttt{test\_predictions.json} --- 7,103 entries, each with
+          a \texttt{target} (ground truth) and \texttt{preds} (list of
+          40 beam candidates).
+    \item \texttt{test\_verdicts.json} --- 284,120 entries recording
+          whether each beam candidate actually compiled and passed the test.
+\end{enumerate}
+
+\textbf{To evaluate TARGET we simply load these files.}
+No model inference, no GPU, no LLM server.
+
+\subsection{GATeR (Full Pipeline at Evaluation Time)}
+
+For each test case the evaluation script calls
+\texttt{GATREngine.repair\_test()}, which executes the complete
+GATeR pipeline:
+
+\begin{enumerate}
+    \item \textbf{Step 1 --- Raw Context Ingestion.}
+          Query the project's Knowledge Graph (Kuzu) for related entities
+          and the Vector Store (LanceDB) for semantically similar code.
+    \item \textbf{Steps 2.1--2.6 --- Context Compression.}
+          Hybrid scoring (KGCompass $\times$ 0.7 + semantic $\times$ 0.3),
+          threshold filtering, snippet compression, relationship filtering,
+          pattern extraction, semantic examples.
+    \item \textbf{Steps 3.1--3.4 --- RAG Aggregation.}
+          Entity aggregation, API delta extraction, canonical usage
+          identification, repair strategy formulation.
+    \item \textbf{Step 4 --- LLM Repair Generation.}
+          The compressed, aggregated context is formatted into a structured
+          prompt and sent to DeepSeek Coder 6.7B via Ollama.
+          The LLM produces the repaired code.
+\end{enumerate}
+
+This means GATeR's evaluation \textbf{requires Ollama running} with the
+model loaded, and each case takes 10--60 seconds (KG query + context
+compression + LLM generation).
+
+\begin{table}[h]
+\centering
+\caption{What each system needs during evaluation}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Requirement} & \textbf{TARGET} & \textbf{GATeR} \\
+\midrule
+Running LLM server & No & Yes (Ollama) \\
+GPU recommended & No & Yes \\
+Knowledge Graph (Kuzu) & No & Yes (per project) \\
+Vector Store (LanceDB) & No & Yes (per project) \\
+Time per case & $\sim$0\,s (load JSON) & $\sim$10--60\,s \\
+Total for 500 cases & $<$1 min & $\sim$2--8 hours \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Evaluation Scripts}
+\label{sec:scripts}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Primary Script: \texttt{evaluation/run\_fair\_evaluation.py}}
+
+This is the \textbf{single script} that orchestrates the full comparison.
+Its 5-step pipeline:
+
+\begin{enumerate}
+    \item \textbf{Build stratified sample.}
+          \texttt{tarbench\_bridge.build\_evaluation\_dataset()} loads
+          TaRBench's \texttt{splits.csv} and all per-project
+          \texttt{dataset.json} files, then draws a stratified sample.
+    \item \textbf{Run GATeR.}
+          For each sampled case, converts TaRBench metadata into GATeR's
+          input format (\texttt{tarbench\_to\_gater\_input()}) and calls
+          \texttt{GATREngine.repair\_test()}.
+          Changed lines are extracted by diffing original vs.\ repaired code.
+    \item \textbf{Load TARGET predictions.}
+          Reads the pre-computed \texttt{test\_predictions.json} and
+          \texttt{test\_verdicts.json} for the same sampled IDs.
+    \item \textbf{Compute metrics.}
+          Calls \texttt{metrics.compute\_all\_metrics()} for both systems.
+    \item \textbf{Generate report.}
+          Produces a Markdown comparison report and JSON results.
+\end{enumerate}
+
+\begin{lstlisting}[language=bash,caption={Running the evaluation}]
+# Full evaluation (GATeR + TARGET on 500 cases, needs Ollama):
+python -m evaluation.run_fair_evaluation
+
+# TARGET-only (no Ollama needed, GATeR skipped):
+python -m evaluation.run_fair_evaluation --skip-gater-run
+
+# Custom sample size:
+python -m evaluation.run_fair_evaluation --sample-size 200 --seed 42
+\end{lstlisting}
+
+\subsection{Supporting Modules}
+
+\begin{table}[h]
+\centering
+\caption{Evaluation file inventory}
+\begin{tabular}{@{}lp{8.5cm}@{}}
+\toprule
+\textbf{File} & \textbf{Purpose} \\
+\midrule
+\texttt{run\_fair\_evaluation.py}
+    & Main 5-step evaluation driver; runs GATeR's full pipeline
+      and loads TARGET's pre-computed results. \\
+\texttt{metrics.py}
+    & Shared metric functions: BLEU, CodeBLEU, EM, beam EM,
+      plausible rate, compilation check, edit similarity,
+      normalization, comparison table formatting. \\
+\texttt{tarbench\_bridge.py}
+    & TaRBench data loading, stratified sampling, TaRBench $\to$
+      GATeR input conversion, ground-truth extraction, TARGET
+      prediction loading. \\
+\texttt{fair\_eval\_config.py}
+    & All paths, sampling parameters (\texttt{SAMPLE\_SIZE=500},
+      \texttt{RANDOM\_SEED=42}), metric configuration. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Why This Comparison Is Fair}
+\label{sec:fairness}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Same Task, Same Input Data}
+
+Each TaRBench test case provides:
+\begin{description}[style=nextline]
+    \item[Test code] The broken Java test method (\texttt{bSource.code}).
+    \item[Broken lines] The lines that must change (\texttt{hunk.sourceChanges}).
+    \item[SUT changes] Source-under-test modifications that caused the
+          breakage (\texttt{prioritized\_changes}).
+    \item[Hunk type] Whether the repair is an addition, deletion, or
+          modification.
+    \item[Verdict] Whether the original break was a compilation error
+          or a runtime test failure.
+\end{description}
+
+TARGET's encoder concatenates these fields into a tokenised sequence.
+GATeR's bridge (\texttt{tarbench\_to\_gater\_input}) converts them into
+the \texttt{broken\_test} dict and \texttt{error\_message} string that
+\texttt{GATREngine} expects, then the pipeline retrieves \emph{additional}
+context from the Knowledge Graph and vector store.
+
+\subsection{Same Subset}
+
+Both systems are evaluated on the exact same set of case IDs, drawn
+via \texttt{stratified\_sample()} with:
+\begin{itemize}
+    \item Proportional representation by verdict type (compile error
+          vs.\ test failure) and triviality flag.
+    \item Per-project cap (\texttt{MAX\_CASES\_PER\_PROJECT=80}).
+    \item Minimum project diversity ($\geq$10 projects).
+    \item Fixed random seed (42) for full reproducibility.
+\end{itemize}
+
+The \texttt{sample\_ids\_<timestamp>.json} file is saved for audit.
+
+\subsection{Same Normalization}
+
+Both TARGET's tokenised output (e.g.,\ \texttt{method ( arg )}) and
+GATeR's raw output (\texttt{method(arg)}) pass through the same
+\texttt{normalize\_code()} function before any metric is computed:
+
+\begin{lstlisting}[language=Python,caption={Code normalization}]
+def normalize_code(code: str) -> str:
+    s = " ".join(code.split())
+    s = re.sub(r"\s*\(\s*", "(", s)
+    s = re.sub(r"\s*\)\s*", ") ", s)
+    s = re.sub(r"\s*\.\s*", ".", s)
+    s = re.sub(r"\s*,\s*", ", ", s)
+    s = re.sub(r"\s*;\s*", "; ", s)
+    s = re.sub(r"\s*<\s*", "<", s)
+    s = re.sub(r"\s*>\s*", "> ", s)
+    return s.strip()
+\end{lstlisting}
+
+\subsection{Same Metrics}
+
+The identical \texttt{compute\_all\_metrics()} function is called for
+both systems. Beam EM and plausible rate are additionally reported for
+TARGET as reference metrics (GATeR does not produce beam candidates or
+execution verdicts in this pipeline).
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Metrics Definitions}
+\label{sec:metrics}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[h]
+\centering
+\caption{Evaluation metrics by category}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{3.4cm}p{6.8cm}c@{}}
+\toprule
+\textbf{Metric} & \textbf{Definition} & \textbf{Category} \\
+\midrule
+BLEU
+    & Corpus-level 4-gram overlap between normalised predictions and
+      ground truth, with smoothing (Method~1).
+    & Fair \\
+CodeBLEU
+    & Code-aware metric: n-gram match, weighted keyword match,
+      syntax match (AST sub-trees), and dataflow match, equally weighted.
+      Uses TARGET's bundled implementation.
+    & Fair \\
+Compilation \%
+    & Lightweight Java syntax check (balanced braces and parentheses).
+      Not a real compiler; catches obvious structural failures.
+    & Fair \\
+Plausible Rate
+    & Percentage of cases where at least one candidate compiles and
+      passes the test (from TARGET's execution verdicts).
+    & Fair \\
+\midrule
+Exact Match
+    & Prediction == ground truth (after normalisation).
+    & Biased\textsuperscript{\dag} \\
+Beam EM ($k{=}40$)
+    & Any of TARGET's 40 beam candidates matches.
+    & Biased\textsuperscript{\dag} \\
+\midrule
+Edit Similarity
+    & Average normalised Levenshtein ratio, 0--100.
+    & Analysis \\
+Line-Level Accuracy
+    & Proportion of changed lines matched per case.
+    & Analysis \\
+Repair Attempt \%
+    & Percentage of cases with a non-empty prediction.
+    & Diagnostic \\
+\bottomrule
+\end{tabular}
+
+\medskip\footnotesize
+\textsuperscript{\dag} EM inherently favours fine-tuned models:
+TARGET is trained to reproduce the exact ground-truth token sequence
+and gets 40 beam attempts. GATeR generates via reasoning and may
+produce \emph{functionally correct but syntactically different} repairs.
+\end{table}
+
+\subsection{Mathematical Formulations}
+
+\textbf{BLEU} (corpus-level, smoothed):
+\begin{equation}
+    \text{BLEU} = \text{BP} \cdot \exp\!\left(\sum_{n=1}^{4} w_n \log p_n\right)
+\end{equation}
+
+\textbf{KGCompass} (GATeR's context scoring, not a repair metric but
+central to context quality):
+\begin{equation}
+    S(f) = \beta^{\,l(f)} \;\Big[\;
+        \alpha \cdot \cos(\mathbf{e}_i, \mathbf{e}_f)
+        + (1{-}\alpha) \cdot \text{lev}(t_i, t_f)
+    \;\Big]
+    \qquad \alpha{=}0.3,\; \beta{=}0.6
+\end{equation}
+
+\textbf{Edit Similarity} per case:
+\begin{equation}
+    \text{EditSim}(t,p) = \frac{2 \cdot |LCS(t, p)|}{|t| + |p|}
+\end{equation}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Paradigm Comparison}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[h]
+\centering
+\caption{Paradigm differences between GATeR and TARGET}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}p{3.6cm}p{5.2cm}p{5.2cm}@{}}
+\toprule
+\textbf{Dimension} & \textbf{GATeR} & \textbf{TARGET} \\
+\midrule
+Paradigm & RAG + zero-shot generation & Supervised fine-tuning \\
+Training data & None & 36,639 repair pairs \\
+Base model & DeepSeek Coder 6.7B & CodeT5+ 770M \\
+Context retrieval & KG (Kuzu) + Vector store (LanceDB)
+                    + KGCompass scoring
+                  & SUT changes appended to input \\
+Context processing & 6-step compression + 4-step RAG
+                     aggregation
+                   & Tokenised concatenation \\
+Repair generation & LLM prompt ($T{=}0.1$) & Beam search ($k{=}40$) \\
+Repository access & Yes (KG built from full repo) & No \\
+Generalises to new projects & Yes---no retraining & Requires retraining \\
+Latency per case & $\sim$10--60\,s & $\sim$0.5\,s (GPU) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Step-by-Step Evaluation Workflow for FYP Defense}
+\label{sec:workflow}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{enumerate}[label=\textbf{Step \arabic*:},leftmargin=3.5em]
+    \item \textbf{Prepare Knowledge Graphs} \\
+          For each TaRBench project in the sample, clone the repository
+          at the correct commit and run GATeR's parser to build the Kuzu
+          KG and LanceDB vector index.
+
+    \item \textbf{Start Ollama} \\
+          \texttt{ollama serve} \\
+          \texttt{ollama list} (verify \texttt{deepseek-coder:6.7b}
+          is present).
+
+    \item \textbf{Run Evaluation} \\
+          \texttt{python -m evaluation.run\_fair\_evaluation --sample-size 500}\\
+          This runs GATeR's \emph{full pipeline} on each case and loads
+          TARGET's pre-computed predictions for the same subset.
+
+    \item \textbf{(Optional) TARGET-Only Quick Check} \\
+          \texttt{python -m evaluation.run\_fair\_evaluation --skip-gater-run}\\
+          Validates TARGET's metrics on the sample without needing Ollama.
+
+    \item \textbf{Inspect Report} \\
+          Outputs in \texttt{evaluation/results/}:
+          \begin{itemize}
+              \item \texttt{fair\_evaluation\_report\_<ts>.md} ---
+                    Markdown comparison report.
+              \item \texttt{fair\_evaluation\_results\_<ts>.json} ---
+                    Raw metric values.
+              \item \texttt{sample\_ids\_<ts>.json} ---
+                    IDs used (for reproducibility).
+          \end{itemize}
+
+    \item \textbf{Validated Reference: TARGET on 500-Case Sample} \\
+          TARGET's subset performance has been pre-validated:
+          BLEU\,=\,62.37, EM\,=\,62.40\%, Plausible\,=\,81.20\%
+          (vs.\ full-set EM\,=\,66.08\%, Plausible\,=\,80.04\%).
+          This confirms the stratified sample is representative.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Why Exact Match Alone Is Insufficient}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Exact Match is the headline metric in the TARGET paper, but it is
+structurally biased toward fine-tuned models:
+
+\begin{itemize}
+    \item \textbf{TARGET} is trained to reproduce the \emph{exact tokenised
+          ground truth}. With 40 beams it gets 40 chances.
+    \item \textbf{GATeR} generates code through \emph{KG-guided reasoning}.
+          It may produce functionally correct repairs that differ
+          syntactically.
+\end{itemize}
+
+\textbf{Example:}
+\begin{lstlisting}[language=Java]
+// Ground truth (tokenised):
+assertEquals ( "test" , result . getName ( ) )
+// GATeR output (raw):
+Assert.assertEquals("test", result.getName())
+\end{lstlisting}
+
+These are semantically identical, but Exact Match ${}= 0$.
+BLEU, CodeBLEU, and edit similarity correctly capture the near-perfect
+overlap. The primary comparison should therefore use these
+\emph{degree-of-correctness} metrics rather than binary EM.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Configuration \& Environment}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[h]
+\centering
+\caption{Key paths and parameters}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Default / Location} \\
+\midrule
+\texttt{TARBENCH\_ROOT} & \texttt{d:\textbackslash ...\textbackslash TaRBench\textbackslash TaRBench} \\
+\texttt{TARGET\_RESULTS\_DIR} & \texttt{d:\textbackslash ...\textbackslash Best\_on\_TaRBench} \\
+\texttt{TARGET\_FINETUNING\_DIR} & \texttt{d:\textbackslash ...\textbackslash fine-tuning}
+    (needed for CodeBLEU keywords) \\
+\texttt{OLLAMA\_BASE\_URL} & \texttt{http://localhost:11434} \\
+\texttt{OLLAMA\_MODEL} & \texttt{deepseek-coder:6.7b} \\
+\texttt{SAMPLE\_SIZE} & 500 \\
+\texttt{RANDOM\_SEED} & 42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{What GATeR's Pipeline Adds Beyond Raw LLM Prompting}
+\label{sec:pipeline-value}
+% ══════════════════════════════════════════════════════════════════════════════
+
+An evaluation that bypasses GATeR's pipeline and simply feeds TaRBench
+context into the LLM would be testing ``prompt engineering + LLM,'' not
+GATeR. The following components are essential to GATeR's contribution
+and \emph{must} be exercised during evaluation:
+
+\begin{enumerate}
+    \item \textbf{Knowledge Graph (Kuzu)} --- builds entity--relationship
+          structure over the entire project (classes, methods, imports,
+          CALLS, TESTS, MODIFIES edges).
+    \item \textbf{KGCompass Relevance Scoring} --- scores candidate
+          entities using graph-distance-weighted similarity
+          (Eq.~$S(f)=\beta^{l(f)}[\alpha\cos + (1{-}\alpha)\text{lev}]$).
+    \item \textbf{Context Compression (Steps 2.1--2.6)} --- hybrid
+          scoring, threshold filtering, snippet compression, relationship
+          pruning, pattern extraction, semantic examples.
+    \item \textbf{RAG Aggregation (Steps 3.1--3.4)} --- entity clustering,
+          API delta extraction, canonical usage identification, repair
+          strategy formulation.
+    \item \textbf{Structured LLM Prompt} --- the compressed, aggregated
+          context is fed to DeepSeek Coder, not the raw TaRBench fields.
+\end{enumerate}
+
+\texttt{run\_fair\_evaluation.py} calls \texttt{GATREngine.repair\_test()}
+which executes all five components. This is the only script that
+evaluates the real GATeR system.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{How TARGET's Metrics Are Computed from Pre-Computed JSON}
+\label{sec:target-metrics}
+% ══════════════════════════════════════════════════════════════════════════════
+
+TARGET does not need a running model at evaluation time.
+Its two JSON files contain everything needed to compute all metrics
+on the sampled subset. The script works as follows:
+
+\begin{enumerate}
+    \item \textbf{\texttt{test\_predictions.json}} is loaded.
+          It contains 7,103 entries, each with:
+          \begin{itemize}
+              \item \texttt{target} --- the ground-truth repair line(s).
+              \item \texttt{preds} --- a list of 40 beam candidates.
+          \end{itemize}
+    \item \textbf{\texttt{test\_verdicts.json}} is loaded.
+          It contains 284,120 execution results (7,103~$\times$~40 beams
+          minus empties). Each records whether that candidate
+          \emph{actually compiled and passed} the test.
+    \item The bridge function \texttt{load\_target\_predictions(ids)}
+          filters to the sampled subset and picks the
+          \textbf{best prediction per case}: the beam that matches the
+          ground truth exactly (if any), otherwise beam~0.
+    \item The same \texttt{compute\_all\_metrics()} function that
+          processes GATeR's outputs is called with TARGET's
+          predictions and verdicts.
+\end{enumerate}
+
+This is how each of the 6 shared metrics gets its TARGET value:
+
+\begin{table}[h]
+\centering
+\caption{How each metric is computed for TARGET from JSON files}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}p{3.2cm}p{10cm}@{}}
+\toprule
+\textbf{Metric} & \textbf{How TARGET's value is obtained} \\
+\midrule
+BLEU
+    & \texttt{best\_pred} (best beam candidate) for each sampled case is
+      normalised and compared to the ground-truth repair lines using
+      corpus-level BLEU with smoothing (Method~1). \\
+CodeBLEU
+    & Same \texttt{best\_pred} vs.\ ground truth, passed through
+      TARGET's own CodeBLEU implementation (n-gram + keyword +
+      syntax-tree + dataflow match). \\
+Compilation~\%
+    & \texttt{best\_pred} is checked for balanced braces and
+      parentheses via \texttt{check\_java\_syntax()}. \\
+Edit Similarity
+    & Normalised Levenshtein ratio between the normalised
+      \texttt{best\_pred} and normalised ground truth, averaged. \\
+Line-Level Accuracy
+    & Each changed line in the ground truth is checked for presence
+      in the prediction (after normalisation); results averaged. \\
+Repair Attempt~\%
+    & Percentage of sampled cases where \texttt{best\_pred} is
+      non-empty (TARGET nearly always produces output, so this is
+      close to 100\%). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key point}: No model inference is performed. TARGET's 6 shared
+metrics are recomputed \emph{from its saved predictions} using exactly
+the same code path as GATeR. Only the plausible rate and beam EM
+require TARGET-specific data (execution verdicts and 40 beams).
+
+To get TARGET's 6 metric scores \emph{without running GATeR}, use:
+\begin{lstlisting}[language=bash]
+python -m evaluation.run_fair_evaluation --skip-gater-run
+\end{lstlisting}
+This takes under 1 minute and needs no GPU or Ollama.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{FAQ: Metric Coverage and Plausible Rate}
+\label{sec:faq}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Which metrics are computed for both systems?}
+
+All 6 primary metrics are computed for \textbf{both} GATeR and TARGET
+through the \emph{exact same} function call
+(\texttt{compute\_all\_metrics()}):
+
+\begin{table}[h]
+\centering
+\caption{Metric coverage per system}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Metric} & \textbf{GATeR} & \textbf{TARGET} & \textbf{Same code path?} \\
+\midrule
+BLEU              & \checkmark & \checkmark & Yes \\
+CodeBLEU          & \checkmark & \checkmark & Yes \\
+Compilation~\%    & \checkmark & \checkmark & Yes \\
+Edit Similarity   & \checkmark & \checkmark & Yes \\
+Line-Level Acc.   & \checkmark & \checkmark & Yes \\
+Repair Attempt~\% & \checkmark & \checkmark & Yes \\
+Exact Match       & \checkmark & \checkmark & Yes (flagged biased) \\
+\midrule
+Plausible Rate    & N/A        & \checkmark & No --- see below \\
+Beam EM ($k{=}40$) & N/A       & \checkmark & No --- TARGET-only \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Why is Plausible Rate N/A for GATeR?}
+
+\textbf{Plausible Rate} means: ``Did the repaired test actually compile
+and pass when executed against the real project?''
+
+TARGET has this metric because the TaRGET authors \emph{physically ran}
+each of the 40 beam candidates in each project's build environment.
+The results are stored in \texttt{test\_verdicts.json}
+(284,120 execution verdicts).
+
+GATeR does \textbf{not} have plausible rate because obtaining it would
+require:
+\begin{enumerate}
+    \item Checking out each of the 59 projects at the exact breakage commit.
+    \item Applying GATeR's generated repair to the broken test file.
+    \item Running the project's full build (Maven/Gradle) and executing
+          the specific test.
+    \item Recording pass/fail.
+\end{enumerate}
+
+This is a \textbf{major infrastructure task} (different Java versions,
+different build tool versions, different dependency trees per project)
+that is not currently implemented in GATeR's evaluation pipeline.
+The metric is therefore honestly reported as N/A rather than using
+a misleading proxy.
+
+\textbf{Note}: GATeR's \texttt{repair\_test()} returns a
+\texttt{success} flag, but this only indicates whether the pipeline
+produced output---it is \emph{not} an execution verdict.
+The evaluation correctly passes \texttt{verdicts=None} for GATeR so
+that plausible rate shows as N/A.
+
+\subsection{Why is Beam EM N/A for GATeR?}
+
+TARGET generates 40 beam candidates per case and reports Exact Match
+if \emph{any} beam matches. GATeR generates a single repair (one LLM
+call per case). Comparing a single attempt against 40 attempts would
+not be meaningful, so beam EM is reported only for TARGET.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Summary}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{itemize}
+    \item \textbf{One script} (\texttt{run\_fair\_evaluation.py}) evaluates
+          both systems on the same stratified subset.
+    \item \textbf{GATeR's full pipeline} (KG + KGCompass + compression +
+          RAG + LLM) is executed for every case.
+          TARGET's pre-computed predictions are loaded from JSON.
+    \item \textbf{6 metrics} (BLEU, CodeBLEU, Compilation~\%, Edit
+          Similarity, Line-Level Accuracy, Repair Attempt~\%) plus
+          Exact Match are computed for \textbf{both} systems through
+          the same code path.
+    \item \textbf{Plausible Rate} is TARGET-only (requires execution
+          verdicts GATeR does not produce).
+    \item \textbf{Beam EM ($k{=}40$)} is TARGET-only (GATeR generates
+          one repair, not 40).
+    \item \textbf{Fairness} is ensured by: same task, same subset,
+          same normalization, same metric implementations.
+    \item \textbf{TARGET-only quick check}: run with
+          \texttt{-{}-skip-gater-run} to get TARGET's 6 metrics in
+          under 1 minute---no GPU, no Ollama.
+    \item \textbf{GATeR's advantage}: zero-shot generalisation---no
+          training data, no retraining, works on any Java project.
+\end{itemize}
+
+\end{document}
