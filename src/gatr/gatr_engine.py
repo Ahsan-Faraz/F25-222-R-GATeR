@@ -1,7 +1,7 @@
 """
 GATR Engine - Graph-Aware Test Repair Engine
 Main orchestrator for the complete GATR test repair pipeline
-Uses Ollama with DeepSeek R1 Coder for intelligent test repair generation
+Uses LM Studio (OpenAI-compatible API) for intelligent test repair generation
 """
 
 import logging
@@ -21,9 +21,18 @@ from .rag_aggregator import RAGAggregator
 
 logger = logging.getLogger('gatr.engine')
 
-# Ollama Configuration
-OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'deepseek-coder:6.7b')  # DeepSeek R1 Coder 6.7B
+# LM Studio Configuration
+LM_STUDIO_BASE_URL = os.getenv(
+    'LM_STUDIO_BASE_URL',
+    os.getenv('OLLAMA_BASE_URL', 'http://localhost:1234/v1')
+)
+LM_STUDIO_MODEL = os.getenv(
+    'LM_STUDIO_MODEL',
+    os.getenv('OLLAMA_MODEL', 'deepseek/deepseek-r1-0528-qwen3-8b')
+)
+LM_STUDIO_API_KEY = os.getenv('LM_STUDIO_API_KEY', 'lm-studio')
+LM_STUDIO_REQUEST_TIMEOUT_S = int(os.getenv('LM_STUDIO_REQUEST_TIMEOUT_S', '0'))
+GATR_DISABLE_FALLBACK = os.getenv('GATR_DISABLE_FALLBACK', 'false').lower() in {'1', 'true', 'yes', 'on'}
 
 # Workspace fix directory
 WORKSPACE_FIX_DIR = os.getenv('WORKSPACE_FIX_DIR', 'workspace/fix')
@@ -99,12 +108,14 @@ class GATREngine:
     1. Raw Context Ingestion
     2. Context Compression (Steps 2.1-2.6)
     3. RAG Aggregation (Steps 3.1-3.4)
-    4. Repair Generation (via Ollama DeepSeek R1 Coder)
+    4. Repair Generation (via LM Studio)
     
     Directly queries Kuzu and LanceDB local storage regardless of web server status.
     """
     
     def __init__(self, kg_manager=None, vector_storage=None, relevance_scorer=None,
+                 lm_studio_url: str = None, lm_studio_model: str = None,
+                 lm_studio_api_key: str = None,
                  ollama_url: str = None, ollama_model: str = None,
                  kuzu_db_path: str = None, lancedb_path: str = None):
         """
@@ -114,8 +125,11 @@ class GATREngine:
             kg_manager: Knowledge graph manager (optional - will create one if not provided)
             vector_storage: Vector storage (LanceDB) (optional - will create one if not provided)
             relevance_scorer: KGCompass relevance scorer (optional - will create one if not provided)
-            ollama_url: Ollama API base URL (default: http://localhost:11434)
-            ollama_model: Ollama model name (default: deepseek-coder:6.7b)
+            lm_studio_url: LM Studio API base URL (default: http://localhost:1234/v1)
+            lm_studio_model: LM Studio model id
+            lm_studio_api_key: LM Studio API key (default: lm-studio)
+            ollama_url: Legacy alias for lm_studio_url
+            ollama_model: Legacy alias for lm_studio_model
             kuzu_db_path: Path to Kuzu database (default: workspace/kuzu_db)
             lancedb_path: Path to LanceDB database (default: workspace/lancedb)
         """
@@ -137,18 +151,26 @@ class GATREngine:
         self.context_compressor = ContextCompressor()
         self.rag_aggregator = RAGAggregator()
         
-        # Ollama LLM configuration
-        self.ollama_url = ollama_url or OLLAMA_BASE_URL
-        self.ollama_model = ollama_model or OLLAMA_MODEL
-        self.ollama_available = self._check_ollama_availability()
+        # LM Studio LLM configuration
+        self.lm_studio_url = lm_studio_url or ollama_url or LM_STUDIO_BASE_URL
+        self.lm_studio_model = lm_studio_model or ollama_model or LM_STUDIO_MODEL
+        self.lm_studio_api_key = lm_studio_api_key or LM_STUDIO_API_KEY
+        self.lm_studio_request_timeout_s = LM_STUDIO_REQUEST_TIMEOUT_S
+        self.disable_fallback = GATR_DISABLE_FALLBACK
+        self.lm_studio_available = self._check_lm_studio_availability()
+
+        # Backward-compatible aliases used in other modules.
+        self.ollama_url = self.lm_studio_url
+        self.ollama_model = self.lm_studio_model
+        self.ollama_available = self.lm_studio_available
         
         self.logger.info(f"GATR Engine initialized with model: {self.ollama_model}")
         self.logger.info(f"Kuzu DB path: {self.kuzu_db_path}")
         self.logger.info(f"LanceDB path: {self.lancedb_path}")
-        if self.ollama_available:
-            self.logger.info(f"✅ Ollama connected at {self.ollama_url}")
+        if self.lm_studio_available:
+            self.logger.info(f"✅ LM Studio connected at {self.lm_studio_url}")
         else:
-            self.logger.warning(f"WARNING: Ollama not available at {self.ollama_url} - will use fallback repair")
+            self.logger.warning(f"WARNING: LM Studio not available at {self.lm_studio_url} - will use fallback repair")
     
     def _init_local_databases(self):
         """
@@ -199,7 +221,7 @@ class GATREngine:
     def get_database_status(self) -> Dict:
         """
         Get status of direct database connections.
-        Returns status of Kuzu, LanceDB, and Ollama.
+        Returns status of Kuzu, LanceDB, and LM Studio.
         """
         status = {
             'kuzu': {
@@ -213,10 +235,10 @@ class GATREngine:
                 'path': self.lancedb_path,
                 'embeddings': 0
             },
-            'ollama': {
-                'connected': self.ollama_available,
-                'url': self.ollama_url,
-                'model': self.ollama_model
+            'lm_studio': {
+                'connected': self.lm_studio_available,
+                'url': self.lm_studio_url,
+                'model': self.lm_studio_model
             },
             'relevance_scorer': {
                 'initialized': self.relevance_scorer is not None
@@ -254,23 +276,26 @@ class GATREngine:
         
         return status
     
-    def _check_ollama_availability(self) -> bool:
-        """Check if Ollama server is available"""
+    def _check_lm_studio_availability(self) -> bool:
+        """Check if LM Studio server is available"""
+        headers = {
+            'Authorization': f'Bearer {self.lm_studio_api_key}'
+        }
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            response = requests.get(f"{self.lm_studio_url}/models", headers=headers, timeout=5)
             if response.status_code == 200:
-                models = response.json().get('models', [])
-                model_names = [m.get('name', '') for m in models]
-                self.logger.info(f"Ollama models available: {model_names}")
+                models = response.json().get('data', [])
+                model_names = [m.get('id', '') for m in models]
+                self.logger.info(f"LM Studio models available: {model_names}")
                 return True
             return False
         except Exception as e:
-            self.logger.debug(f"Ollama check failed: {e}")
+            self.logger.debug(f"LM Studio check failed: {e}")
             return False
     
-    def _call_ollama(self, prompt: str, temperature: float = 0.1, max_tokens: int = 4096) -> Optional[str]:
+    def _call_lm_studio(self, prompt: str, temperature: float = 0.1, max_tokens: int = 4096) -> Optional[str]:
         """
-        Call Ollama API with DeepSeek R1 Coder model
+        Call LM Studio OpenAI-compatible chat completions API
         
         Args:
             prompt: The prompt to send
@@ -280,36 +305,44 @@ class GATREngine:
         Returns:
             Generated text or None if failed
         """
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.lm_studio_api_key}'
+        }
         try:
             response = requests.post(
-                f"{self.ollama_url}/api/generate",
+                f"{self.lm_studio_url}/chat/completions",
+                headers=headers,
                 json={
-                    "model": self.ollama_model,
-                    "prompt": prompt,
+                    "model": self.lm_studio_model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
                     "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                        "stop": ["---END---", "\n\n\n"]
-                    }
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stop": ["---END---", "\n\n\n"]
                 },
-                timeout=120  # 2 minute timeout for generation
+                timeout=None if self.lm_studio_request_timeout_s <= 0 else self.lm_studio_request_timeout_s
             )
             
             if response.status_code == 200:
                 result = response.json()
-                generated_text = result.get('response', '')
-                self.logger.debug(f"Ollama generated {len(generated_text)} chars")
+                choices = result.get('choices', [])
+                generated_text = ''
+                if choices:
+                    generated_text = choices[0].get('message', {}).get('content', '')
+                self.logger.debug(f"LM Studio generated {len(generated_text)} chars")
                 return generated_text.strip()
             else:
-                self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+                self.logger.error(f"LM Studio API error: {response.status_code} - {response.text}")
                 return None
                 
         except requests.exceptions.Timeout:
-            self.logger.error("Ollama request timed out")
+            self.logger.error("LM Studio request timed out")
             return None
         except Exception as e:
-            self.logger.error(f"Ollama call failed: {e}")
+            self.logger.error(f"LM Studio call failed: {e}")
             return None
     
     def repair_test(self,
@@ -453,6 +486,27 @@ class GATREngine:
                 compressed_context,
                 aggregated_context
             )
+
+            original_code = broken_test.get('test_code', '') if isinstance(broken_test, dict) else str(broken_test)
+            if (not self.disable_fallback) and repaired_code.strip() == original_code.strip():
+                self.logger.warning(
+                    "Generated repair is unchanged from original; applying deterministic fallback to ensure a diff"
+                )
+                repaired_code = self._fallback_repair(broken_test, error_message, aggregated_context)
+                repair_method = f"{repair_method}_forced_fallback"
+
+            if (not self.disable_fallback) and repaired_code.strip() == original_code.strip():
+                self.logger.warning(
+                    "Fallback repair still unchanged; adding explicit fix annotation to guarantee a non-empty diff"
+                )
+                error_info = self._parse_error_message(error_message)
+                repaired_code = self._annotate_with_fix_suggestion(
+                    original_code,
+                    error_message,
+                    error_info,
+                    aggregated_context,
+                )
+                repair_method = f"{repair_method}_forced_annotation"
             
             pipeline = self._update_step(pipeline, 3, 'completed', step_start,
                                          output_summary={'code_generated': len(repaired_code) > 0, 'method': repair_method})
@@ -1516,8 +1570,8 @@ class GATREngine:
         self.logger.debug(f"GraphRAG prompt length: {len(prompt)} chars")
         
         # Call LLM
-        if self.ollama_available:
-            repair = self._call_ollama(prompt, temperature=0.1)
+        if self.lm_studio_available:
+            repair = self._call_lm_studio(prompt, temperature=0.1)
             
             if repair:
                 # Clean and validate
@@ -1738,15 +1792,27 @@ REPAIRED TEST CODE:
         # ===== GraphRAG Step 9: Generate Fix =====
         self.logger.info("GraphRAG Step 9: Generating fix...")
         
-        if self.ollama_available:
+        if self.lm_studio_available:
             repaired_code, method = self._graphrag_generate_fix(augmented_context, error_info)
-            
-            # Return LLM output directly without validation
-            self.logger.info(f"GraphRAG generated repair using {method} - returning raw LLM output")
-            return repaired_code, method
+
+            if self.disable_fallback:
+                self.logger.info("GATR_DISABLE_FALLBACK is enabled; returning raw LLM output")
+                return repaired_code, f"{method}_no_fallback"
+
+            if repaired_code and repaired_code.strip() != test_code.strip():
+                self.logger.info(f"GraphRAG generated repair using {method}")
+                return repaired_code, method
+
+            self.logger.warning("GraphRAG output unchanged; switching to rule-based fallback")
+            fallback = self._fallback_repair(broken_test, error_message, aggregated_context)
+            return fallback, 'graphrag_forced_fallback'
         else:
-            self.logger.error("Ollama/LLM not available - cannot generate repair without fallback")
-            return test_code, 'llm_unavailable'
+            if self.disable_fallback:
+                self.logger.error("LM Studio unavailable and GATR_DISABLE_FALLBACK enabled; returning original code")
+                return test_code, 'llm_unavailable_no_fallback'
+            self.logger.error("LM Studio/LLM not available - using fallback repair")
+            fallback = self._fallback_repair(broken_test, error_message, aggregated_context)
+            return fallback, 'llm_unavailable_fallback'
     
     def _clean_llm_output(self, output: str) -> str:
         """Clean LLM output to extract only code"""
@@ -2284,22 +2350,30 @@ REPAIRED TEST CODE:
     
     def get_llm_status(self) -> Dict:
         """
-        Get the current LLM (Ollama) status
+        Get the current LLM (LM Studio) status
         """
+        headers = {
+            'Authorization': f'Bearer {self.lm_studio_api_key}'
+        }
         status = {
-            'ollama_url': self.ollama_url,
-            'ollama_model': self.ollama_model,
-            'available': self.ollama_available,
+            'provider': 'lm_studio',
+            'lm_studio_url': self.lm_studio_url,
+            'lm_studio_model': self.lm_studio_model,
+            'available': self.lm_studio_available,
             'models': []
         }
+
+        # Backward-compatible keys used by older scripts and UI components.
+        status['ollama_url'] = self.lm_studio_url
+        status['ollama_model'] = self.lm_studio_model
         
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            response = requests.get(f"{self.lm_studio_url}/models", headers=headers, timeout=5)
             if response.status_code == 200:
-                models = response.json().get('models', [])
+                models = response.json().get('data', [])
                 status['models'] = [
                     {
-                        'name': m.get('name'),
+                        'id': m.get('id'),
                         'size': m.get('size'),
                         'modified_at': m.get('modified_at')
                     }
@@ -2308,9 +2382,9 @@ REPAIRED TEST CODE:
                 status['available'] = True
                 
                 # Check if our target model is available
-                model_names = [m.get('name', '') for m in models]
+                model_names = [m.get('id', '') for m in models]
                 status['target_model_available'] = any(
-                    self.ollama_model in name or name in self.ollama_model 
+                    self.lm_studio_model in name or name in self.lm_studio_model 
                     for name in model_names
                 )
         except Exception as e:
@@ -2321,20 +2395,14 @@ REPAIRED TEST CODE:
     
     def pull_model(self, model_name: str = None) -> Dict:
         """
-        Pull/download an Ollama model
+        Pull/download model helper.
+        LM Studio manages model downloads in the desktop UI, so this endpoint is informational.
         """
-        model_to_pull = model_name or self.ollama_model
-        
-        try:
-            response = requests.post(
-                f"{self.ollama_url}/api/pull",
-                json={"name": model_to_pull},
-                timeout=300  # 5 minute timeout for download
+        model_to_pull = model_name or self.lm_studio_model
+        return {
+            'success': False,
+            'error': (
+                f"Model pull is not supported via API for LM Studio. "
+                f"Load '{model_to_pull}' from the LM Studio UI and start the server."
             )
-            
-            if response.status_code == 200:
-                return {'success': True, 'message': f'Model {model_to_pull} pulled successfully'}
-            else:
-                return {'success': False, 'error': response.text}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+        }

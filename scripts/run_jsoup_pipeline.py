@@ -199,12 +199,12 @@ def run_pipeline(skip_clone: bool = False, entity_limit: int = 1000):
         
         results['steps']['gatr_engine'] = {
             'success': True,
-            'ollama_available': llm_status.get('available', False),
-            'ollama_model': llm_status.get('ollama_model', 'N/A'),
+            'llm_available': llm_status.get('available', False),
+            'llm_model': llm_status.get('lm_studio_model') or llm_status.get('ollama_model', 'N/A'),
             'models_available': len(llm_status.get('models', []))
         }
         
-        logger.info(f"GATR Engine initialized - Ollama: {llm_status.get('available', False)}")
+        logger.info(f"GATR Engine initialized - LLM available: {llm_status.get('available', False)}")
         
     except Exception as e:
         logger.error(f"GATR engine initialization failed: {e}")

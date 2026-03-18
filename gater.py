@@ -169,6 +169,27 @@ class GATeRAnalyzer:
         Returns:
             Analysis results and statistics
         """
+        # OPT-9: Deduplicate orchestration by delegating to the core analyzer.
+        if progress_callback:
+            try:
+                progress_callback(1, "Starting", "Initializing repository analysis")
+            except Exception:
+                pass
+
+        result = self.analyze_repository(
+            repo_url=repo_url,
+            incremental=incremental,
+            skip_github_artifacts=skip_github_artifacts,
+        )
+
+        if progress_callback:
+            try:
+                progress_callback(6, "Completed", "Repository analysis completed")
+            except Exception:
+                pass
+
+        return result
+
         if progress_callback is None:
             # Fallback to regular analysis if no callback provided
             return self.analyze_repository(repo_url, incremental, skip_github_artifacts)

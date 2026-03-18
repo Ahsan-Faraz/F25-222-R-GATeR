@@ -1554,7 +1554,7 @@ def gatr_get_results():
 
 @app.route('/gatr/status')
 def gatr_status():
-    """Get GATR engine status including direct database connections and LLM (Ollama) status"""
+    """Get GATR engine status including direct database connections and LLM status"""
     if gatr_engine is None:
         return jsonify({
             'available': False,
@@ -1588,9 +1588,9 @@ def gatr_status():
             }
         },
         'llm': {
-            'provider': 'ollama',
-            'model': llm_status.get('ollama_model'),
-            'url': llm_status.get('ollama_url'),
+            'provider': llm_status.get('provider', 'lm_studio'),
+            'model': llm_status.get('lm_studio_model') or llm_status.get('ollama_model'),
+            'url': llm_status.get('lm_studio_url') or llm_status.get('ollama_url'),
             'available': llm_status.get('available', False),
             'target_model_available': llm_status.get('target_model_available', False),
             'installed_models': llm_status.get('models', []),
@@ -1602,10 +1602,10 @@ def gatr_status():
 @app.route('/gatr/llm/pull', methods=['POST'])
 def gatr_pull_model():
     """
-    Pull/download an Ollama model
+    Pull/download a model (provider dependent)
     
     POST /gatr/llm/pull
-    Body: {"model": "deepseek-coder:6.7b"} (optional, defaults to configured model)
+    Body: {"model": "<model-id>"} (optional, defaults to configured model)
     """
     try:
         if gatr_engine is None:
