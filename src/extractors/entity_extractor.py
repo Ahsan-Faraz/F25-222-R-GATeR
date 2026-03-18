@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 logger = logging.getLogger('gater.extractor')
+CAMEL_PARTS_RE = re.compile(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
 
 class Entity:
     """Represents a code entity (class, function, import, etc.)"""
@@ -57,15 +58,74 @@ class EntityExtractor:
         self.entities = {}
         self.relationships = []
         self.file_to_entities = {}
+        self.name_index: Dict[str, List[str]] = {}
+        self.name_type_index: Dict[tuple, List[str]] = {}
+        self.type_index: Dict[str, Set[str]] = {}
+        self.file_name_index: Dict[str, Dict[str, str]] = {}
+        self.file_callable_entities: Dict[str, List[str]] = {}
+        self.package_index: Dict[str, Set[str]] = {}
+        self.suffix_index: Dict[str, List[str]] = {}
+
+    def _reset_state(self):
+        """Reset extraction state and all lookup indexes."""
+        self.entities.clear()
+        self.relationships.clear()
+        self.file_to_entities.clear()
+        self.name_index.clear()
+        self.name_type_index.clear()
+        self.type_index.clear()
+        self.file_name_index.clear()
+        self.file_callable_entities.clear()
+        self.package_index.clear()
+        self.suffix_index.clear()
+
+    def _register_entity(self, entity: Entity, file_path: Optional[str] = None):
+        """Register an entity and update all relevant indexes."""
+        self.entities[entity.id] = entity
+
+        self.name_index.setdefault(entity.name, []).append(entity.id)
+        self.name_type_index.setdefault((entity.name, entity.type), []).append(entity.id)
+        self.type_index.setdefault(entity.type, set()).add(entity.id)
+
+        suffix = entity.name.rsplit('.', 1)[-1] if entity.name else ''
+        if suffix:
+            self.suffix_index.setdefault(suffix, []).append(entity.id)
+
+        effective_file = file_path if file_path is not None else entity.file_path
+        if effective_file:
+            self.file_to_entities.setdefault(effective_file, [])
+            self.file_name_index.setdefault(effective_file, {})
+            self.file_callable_entities.setdefault(effective_file, [])
+
+            if file_path is not None and entity.id not in self.file_to_entities[effective_file]:
+                self.file_to_entities[effective_file].append(entity.id)
+                # Preserve the first hit for a given name in file-local lookups.
+                self.file_name_index[effective_file].setdefault(entity.name, entity.id)
+
+                if entity.type in {'function', 'method', 'test'}:
+                    self.file_callable_entities[effective_file].append(entity.id)
+
+            package_key = Path(effective_file).parent.as_posix()
+            self.package_index.setdefault(package_key, set()).add(entity.id)
+
+    def _candidate_ids_by_name(self, name: str, allowed_types: Optional[Set[str]] = None) -> List[str]:
+        """Fast lookup for entity IDs by name with optional type filtering."""
+        ids = self.name_index.get(name, [])
+        if not allowed_types:
+            return ids
+        return [eid for eid in ids if self.entities[eid].type in allowed_types]
+
+    def _find_global_entity_by_name(self, name: str, allowed_types: Optional[Set[str]] = None) -> Optional[str]:
+        """Return the first global entity ID matching name and optional types."""
+        ids = self._candidate_ids_by_name(name, allowed_types)
+        return ids[0] if ids else None
         
     def extract_entities(self, parsed_data: Dict) -> Dict:
         """Extract entities and relationships from parsed project data"""
         logger.info("Starting entity extraction")
         
         # Clear previous data
-        self.entities.clear()
-        self.relationships.clear()
-        self.file_to_entities.clear()
+        self._reset_state()
         
         project_path = parsed_data.get('project_path', '')
         files_data = parsed_data.get('files', {})
@@ -214,8 +274,10 @@ class EntityExtractor:
             file_path=file_path,
             full_path=file_path
         )
-        self.entities[file_id] = file_entity
+        self._register_entity(file_entity)
         self.file_to_entities[file_path] = []
+        self.file_name_index[file_path] = {}
+        self.file_callable_entities[file_path] = []
         
         # Extract classes
         for class_data in file_data.get('classes', []):
@@ -230,8 +292,7 @@ class EntityExtractor:
                 methods=class_data.get('methods', []),
                 base_classes=class_data.get('base_classes', [])
             )
-            self.entities[class_id] = class_entity
-            self.file_to_entities[file_path].append(class_id)
+            self._register_entity(class_entity, file_path=file_path)
             
             # Create BELONGS_TO relationship
             rel = Relationship(class_id, file_id, 'BELONGS_TO')
@@ -250,8 +311,7 @@ class EntityExtractor:
                 parameters=func_data.get('parameters', []),
                 is_test=func_data.get('is_test', False)
             )
-            self.entities[func_id] = func_entity
-            self.file_to_entities[file_path].append(func_id)
+            self._register_entity(func_entity, file_path=file_path)
             
             # Create BELONGS_TO relationship
             rel = Relationship(func_id, file_id, 'BELONGS_TO')
@@ -270,8 +330,7 @@ class EntityExtractor:
                 parameters=test_data.get('parameters', []),
                 is_test=True
             )
-            self.entities[test_id] = test_entity
-            self.file_to_entities[file_path].append(test_id)
+            self._register_entity(test_entity, file_path=file_path)
             
             # Create BELONGS_TO relationship
             rel = Relationship(test_id, file_id, 'BELONGS_TO')
@@ -290,8 +349,7 @@ class EntityExtractor:
                     from_module=import_data.get('from_module'),
                     line=import_data.get('line')
                 )
-                self.entities[import_id] = import_entity
-                self.file_to_entities[file_path].append(import_id)
+                self._register_entity(import_entity, file_path=file_path)
                 
                 # Create BELONGS_TO relationship
                 rel = Relationship(import_id, file_id, 'BELONGS_TO')
@@ -381,18 +439,14 @@ class EntityExtractor:
     
     def _find_entity_by_name(self, file_path: str, entity_name: str) -> Optional[str]:
         """Find an entity by name within a specific file"""
-        for entity_id in self.file_to_entities.get(file_path, []):
-            entity = self.entities[entity_id]
-            if entity.name == entity_name:
-                return entity_id
-        return None
+        return self.file_name_index.get(file_path, {}).get(entity_name)
     
     def _find_or_create_entity(self, entity_name: str, file_path: str, entity_type: str) -> str:
         """Find an existing entity or create a new placeholder entity"""
         # First, try to find an existing entity with this name
-        for entity_id, entity in self.entities.items():
-            if entity.name == entity_name and entity.type in ['class', 'function', 'resource']:
-                return entity_id
+        existing = self._find_global_entity_by_name(entity_name, {'class', 'function', 'resource'})
+        if existing:
+            return existing
         
         # If not found, create a placeholder entity
         placeholder_id = self._generate_entity_id(file_path, f"placeholder_{entity_type}", entity_name)
@@ -403,13 +457,7 @@ class EntityExtractor:
             file_path=file_path,
             is_placeholder=True
         )
-        self.entities[placeholder_id] = placeholder_entity
-        
-        # Add to file entities if not already there
-        if file_path not in self.file_to_entities:
-            self.file_to_entities[file_path] = []
-        if placeholder_id not in self.file_to_entities[file_path]:
-            self.file_to_entities[file_path].append(placeholder_id)
+        self._register_entity(placeholder_entity, file_path=file_path)
         
         return placeholder_id
     
@@ -420,14 +468,19 @@ class EntityExtractor:
     
     def _generate_file_id(self, file_path: str) -> str:
         """Generate file entity ID"""
-        return f"file_{file_path.replace('/', '_').replace('\\', '_').replace('.', '_')}"
+        clean_path = file_path.replace('/', '_').replace('\\', '_').replace('.', '_')
+        return f"file_{clean_path}"
     
     def _find_imported_entity(self, module: str, from_module: Optional[str]) -> Optional[str]:
         """Find the entity being imported"""
-        # Try to find matching entities in the project
-        for entity_id, entity in self.entities.items():
-            if entity.name == module or entity.name.endswith(f".{module}"):
-                return entity_id
+        # Fast exact-name lookup first.
+        direct = self._find_global_entity_by_name(module)
+        if direct:
+            return direct
+
+        # Then suffix lookup for dotted names (e.g. pkg.mod.Class -> Class).
+        for entity_id in self.suffix_index.get(module, []):
+            return entity_id
         
         # If not found, create a placeholder external module entity
         if from_module:
@@ -444,33 +497,31 @@ class EntityExtractor:
                 file_path='',
                 is_external=True
             )
-            self.entities[external_id] = external_entity
+            self._register_entity(external_entity)
         
         return external_id
     
     def _find_entity_at_line(self, file_path: str, line: int) -> Optional[str]:
         """Find the entity (function/method) containing the given line"""
-        for entity_id in self.file_to_entities.get(file_path, []):
+        for entity_id in self.file_callable_entities.get(file_path, []):
             entity = self.entities[entity_id]
-            if entity.type in ['function', 'method', 'test']:
-                line_start = entity.properties.get('line_start', 0)
-                line_end = entity.properties.get('line_end', 0)
-                if line_start <= line <= line_end:
-                    return entity_id
+            line_start = entity.properties.get('line_start', 0)
+            line_end = entity.properties.get('line_end', 0)
+            if line_start <= line <= line_end:
+                return entity_id
         return None
     
     def _find_called_entity(self, func_name: str, calling_file: str) -> Optional[str]:
         """Find the entity being called"""
         # First, look in the same file
-        for entity_id in self.file_to_entities.get(calling_file, []):
-            entity = self.entities[entity_id]
-            if entity.name == func_name:
-                return entity_id
+        local = self.file_name_index.get(calling_file, {}).get(func_name)
+        if local:
+            return local
         
         # Then, look in other files
-        for entity_id, entity in self.entities.items():
-            if entity.name == func_name and entity.type in ['function', 'method', 'class']:
-                return entity_id
+        global_match = self._find_global_entity_by_name(func_name, {'function', 'method', 'class'})
+        if global_match:
+            return global_match
         
         # If not found, create a placeholder
         placeholder_id = f"unknown_function_{func_name}"
@@ -482,7 +533,7 @@ class EntityExtractor:
                 file_path='',
                 is_placeholder=True
             )
-            self.entities[placeholder_id] = placeholder_entity
+            self._register_entity(placeholder_entity)
         
         return placeholder_id
     
@@ -524,31 +575,37 @@ class EntityExtractor:
                     base_function_patterns.append('_'.join(parts[:i]))
             
             # Handle camelCase breakdown
-            import re
-            camel_parts = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)', tested_name)
+            camel_parts = CAMEL_PARTS_RE.findall(tested_name)
             if len(camel_parts) > 1:
                 # calculateSumWithTax -> calculateSum, calculate
                 for i in range(1, len(camel_parts) + 1):
                     pattern = ''.join(camel_parts[:i])
                     pattern = pattern[0].lower() + pattern[1:] if pattern else pattern
                     base_function_patterns.append(pattern)
+
+        # Deduplicate while preserving order
+        base_function_patterns = list(dict.fromkeys(base_function_patterns))
         
         # Enhanced matching with class context
         test_file_class = self._get_test_class_name(file_path)
         production_class = self._infer_production_class(test_file_class, file_path)
+        same_package_entities = set(self._find_same_package_entities(file_path))
         
         # Look for matching function/method/class with priority order
         for pattern in base_function_patterns:
             # 1. Look in corresponding production class first
             if production_class:
-                for entity_id, entity in self.entities.items():
-                    if (entity.name == pattern and 
-                        entity.type in ['function', 'method'] and
-                        production_class in entity_id):
-                        return entity_id
+                for entity_id in self.name_type_index.get((production_class, 'class'), []):
+                    cls_entity = self.entities[entity_id]
+                    if 'test' in cls_entity.file_path.lower():
+                        continue
+                    cls_pkg = Path(cls_entity.file_path).parent.as_posix()
+                    for candidate_id in self._candidate_ids_by_name(pattern, {'function', 'method'}):
+                        candidate = self.entities[candidate_id]
+                        if Path(candidate.file_path).parent.as_posix() == cls_pkg:
+                            return candidate_id
             
             # 2. Look in same package/directory
-            same_package_entities = self._find_same_package_entities(file_path)
             for entity_id in same_package_entities:
                 entity = self.entities[entity_id]
                 if (entity.name == pattern and 
@@ -556,25 +613,21 @@ class EntityExtractor:
                     return entity_id
             
             # 3. Look in same file
-            for entity_id, entity in self.entities.items():
-                if (entity.name == pattern and 
-                    entity.type in ['function', 'method', 'class'] and
-                    entity.file_path == file_path):
-                    return entity_id
+            local = self.file_name_index.get(file_path, {}).get(pattern)
+            if local and self.entities[local].type in ['function', 'method', 'class']:
+                return local
             
             # 4. Global search as fallback
-            for entity_id, entity in self.entities.items():
-                if (entity.name == pattern and 
-                    entity.type in ['function', 'method', 'class']):
-                    return entity_id
+            global_candidate = self._find_global_entity_by_name(pattern, {'function', 'method', 'class'})
+            if global_candidate:
+                return global_candidate
         
         # Special case: for web/API tests, look for functions that might handle the tested functionality
         # e.g., test_predict_* tests might test predict() function
         if 'predict' in tested_name.lower():
-            for entity_id, entity in self.entities.items():
-                if (entity.name == 'predict' and 
-                    entity.type in ['function', 'method']):
-                    return entity_id
+            predict_candidate = self._find_global_entity_by_name('predict', {'function', 'method'})
+            if predict_candidate:
+                return predict_candidate
         
         # Try common test patterns
         pattern_mappings = {
@@ -589,10 +642,9 @@ class EntityExtractor:
         for key, candidates in pattern_mappings.items():
             if key in tested_name.lower():
                 for candidate in candidates:
-                    for entity_id, entity in self.entities.items():
-                        if (entity.name == candidate and 
-                            entity.type in ['function', 'method', 'class']):
-                            return entity_id
+                    entity_id = self._find_global_entity_by_name(candidate, {'function', 'method', 'class'})
+                    if entity_id:
+                        return entity_id
         
         return None
     
@@ -629,10 +681,9 @@ class EntityExtractor:
         
         # Look for matching production classes
         for candidate in production_class_candidates:
-            for entity_id, entity in self.entities.items():
-                if (entity.name == candidate and 
-                    entity.type == 'class' and
-                    'test' not in entity.file_path.lower()):
+            for entity_id in self.name_type_index.get((candidate, 'class'), []):
+                entity = self.entities[entity_id]
+                if 'test' not in entity.file_path.lower():
                     return candidate
         
         return None
@@ -642,7 +693,8 @@ class EntityExtractor:
         try:
             # Convert test path to production path
             # src/test/java/org/jsoup/parser/ -> src/main/java/org/jsoup/parser/
-            path_parts = Path(file_path).parts
+            norm_path = Path(file_path).as_posix()
+            path_parts = Path(norm_path).parts
             
             if 'test' in path_parts:
                 # Create production path pattern
@@ -656,12 +708,26 @@ class EntityExtractor:
                 production_path_pattern = '/'.join(production_parts[:-1])  # Remove filename
                 
                 # Find entities in similar path structure
-                same_package_entities = []
-                for entity_id, entity in self.entities.items():
-                    if (production_path_pattern in entity.file_path.replace('\\', '/') and
-                        entity.type in ['function', 'method', 'class']):
+                same_package_entities: List[str] = []
+
+                # Exact package match fast path.
+                exact_ids = self.package_index.get(production_path_pattern, set())
+                for entity_id in exact_ids:
+                    entity = self.entities[entity_id]
+                    if entity.type in ['function', 'method', 'class']:
                         same_package_entities.append(entity_id)
-                
+
+                if same_package_entities:
+                    return same_package_entities
+
+                # Prefix-based fallback for nested package structures.
+                for pkg, ids in self.package_index.items():
+                    if production_path_pattern in pkg:
+                        for entity_id in ids:
+                            entity = self.entities[entity_id]
+                            if entity.type in ['function', 'method', 'class']:
+                                same_package_entities.append(entity_id)
+
                 return same_package_entities
         except:
             pass

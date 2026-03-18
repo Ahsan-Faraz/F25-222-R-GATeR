@@ -39,6 +39,9 @@ class KnowledgeGraphManager:
     def __init__(self, kuzu_db_path: Optional[str] = None, kuzu_buffer_size: int = 4294967296, auto_load: bool = True):
         self.graph = nx.DiGraph()
         self.entity_index = {}  # Quick lookup: entity_name -> node_id
+        self.type_index: Dict[str, Set[str]] = {}
+        self.file_index: Dict[str, Set[str]] = {}
+        self._indexes_dirty = True
         self.relationship_types = {
             'TESTS', 'CALLS', 'IMPORTS', 'MODIFIES', 
             'MENTIONS_ISSUE', 'MENTIONS_PR', 'BELONGS_TO'
@@ -108,6 +111,7 @@ class KnowledgeGraphManager:
                     self.graph.add_edge(source, target, relationship_type=rel_type, **properties)
             
             logger.info(f"SUCCESS: Loaded {self.graph.number_of_nodes()} entities, {self.graph.number_of_edges()} relationships from Kuzu")
+            self._indexes_dirty = True
             
         except Exception as e:
             logger.error(f"ERROR: Failed to load from Kuzu: {e}")
@@ -147,6 +151,7 @@ class KnowledgeGraphManager:
                 logger.error(f"ERROR: Failed to sync entities to Kuzu: {e}")
         
         logger.info(f"Added {added_count} new entities to knowledge graph")
+        self._indexes_dirty = True
         return added_count
     
     def add_relationships(self, relationships: List[Dict]) -> int:
@@ -231,6 +236,7 @@ class KnowledgeGraphManager:
                 logger.error(f"ERROR: Failed to sync entity deletions to Kuzu: {e}")
         
         logger.info(f"Removed {removed_count} entities from knowledge graph")
+        self._indexes_dirty = True
         return removed_count
     
     def update_entity(self, entity_id: str, updates: Dict) -> bool:
@@ -265,7 +271,29 @@ class KnowledgeGraphManager:
                     self.entity_index[new_name].append(entity_id)
         
         logger.debug(f"Updated entity: {entity_id}")
+        self._indexes_dirty = True
         return True
+
+    def _rebuild_indexes(self):
+        """Rebuild type and file indexes from graph nodes."""
+        self.type_index = {}
+        self.file_index = {}
+
+        for node_id, data in self.graph.nodes(data=True):
+            entity_type = data.get('type')
+            if entity_type:
+                self.type_index.setdefault(entity_type, set()).add(node_id)
+
+            file_path = data.get('file_path')
+            if file_path:
+                self.file_index.setdefault(file_path, set()).add(node_id)
+
+        self._indexes_dirty = False
+
+    def _ensure_indexes(self):
+        """Ensure indexes are current before indexed lookups."""
+        if self._indexes_dirty:
+            self._rebuild_indexes()
     
     def get_entity(self, entity_id: str) -> Optional[Dict]:
         """Get entity by ID"""
@@ -279,17 +307,13 @@ class KnowledgeGraphManager:
     
     def find_entities_by_type(self, entity_type: str) -> List[str]:
         """Find all entities of a specific type"""
-        return [
-            node_id for node_id, data in self.graph.nodes(data=True)
-            if data.get('type') == entity_type
-        ]
+        self._ensure_indexes()
+        return list(self.type_index.get(entity_type, set()))
     
     def find_entities_by_file(self, file_path: str) -> List[str]:
         """Find all entities in a specific file"""
-        return [
-            node_id for node_id, data in self.graph.nodes(data=True)
-            if data.get('file_path') == file_path
-        ]
+        self._ensure_indexes()
+        return list(self.file_index.get(file_path, set()))
     
     def get_relationships(self, source: Optional[str] = None, 
                          target: Optional[str] = None, 
@@ -485,6 +509,9 @@ class KnowledgeGraphManager:
         """Clear the entire knowledge graph"""
         self.graph.clear()
         self.entity_index.clear()
+        self.type_index.clear()
+        self.file_index.clear()
+        self._indexes_dirty = False
         
         # Clear Kuzu database
         if self.kuzu_manager:
@@ -527,11 +554,8 @@ class KnowledgeGraphManager:
     
     def find_entities_by_file(self, file_path: str) -> List[str]:
         """Find all entities belonging to a specific file"""
-        entities = []
-        for node_id, data in self.graph.nodes(data=True):
-            if data.get('file_path') == file_path:
-                entities.append(node_id)
-        return entities
+        self._ensure_indexes()
+        return list(self.file_index.get(file_path, set()))
     
     def remove_entities(self, entity_ids: List[str]):
         """Remove entities from the knowledge graph"""
@@ -559,6 +583,8 @@ class KnowledgeGraphManager:
                 logger.info(f"SUCCESS: Synced {kuzu_deleted} entity deletions to Kuzu database")
             except Exception as e:
                 logger.error(f"ERROR: Failed to sync entity deletions to Kuzu: {e}")
+
+        self._indexes_dirty = True
     
     def update_entity(self, entity_id: str, updates: Dict):
         """Update entity attributes"""

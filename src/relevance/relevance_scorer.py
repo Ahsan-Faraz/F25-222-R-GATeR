@@ -7,7 +7,6 @@ import logging
 import numpy as np
 import networkx as nx
 from typing import Dict, List, Tuple, Optional, Union
-from difflib import SequenceMatcher
 import re
 from dataclasses import dataclass
 
@@ -193,31 +192,100 @@ class RelevanceScorer:
             List of RelevanceScore objects, sorted by score (descending)
         """
         self.logger.info(f"Ranking {len(candidate_entities)} entities for issue {issue_node_id}")
-        
-        scores = []
-        
-        for entity in candidate_entities:
-            try:
-                score = self.calculate_relevance_score(
-                    problem_description, entity, graph, issue_node_id
+        if not candidate_entities:
+            return []
+
+        # Resolve single starting node once.
+        if issue_node_id is None:
+            starting_node_id, is_virtual = self.find_or_create_starting_node(graph, problem_description)
+        else:
+            starting_node_id = issue_node_id
+            is_virtual = False
+
+        try:
+            # OPT-1: compute all path lengths from source once instead of per-entity Dijkstra.
+            all_path_lengths = self.path_calculator.calculate_all_shortest_paths_from_source(
+                graph,
+                starting_node_id,
+                max_distance=self.max_path_length,
+            )
+
+            problem_text = self.embedding_generator.prepare_problem_description_text(problem_description)
+            entity_texts = [self.embedding_generator.prepare_code_entity_text(e) for e in candidate_entities]
+
+            # OPT-2: use batch embeddings to reduce model call overhead.
+            batch_embeddings = self.embedding_generator.generate_batch_embeddings(
+                [problem_text] + entity_texts,
+                use_cache=True,
+            )
+            problem_embedding = batch_embeddings[0]
+            entity_embeddings = batch_embeddings[1:]
+
+            scores: List[RelevanceScore] = []
+            for entity, entity_embedding, entity_text in zip(candidate_entities, entity_embeddings, entity_texts):
+                entity_id = entity.get('id', '')
+                entity_name = entity.get('name', '')
+                entity_type = entity.get('type', 'unknown')
+
+                path_length = all_path_lengths.get(entity_id, float('inf'))
+                if path_length == float('inf') or path_length > self.max_path_length:
+                    safe_length = self.max_path_length + 1 if path_length == float('inf') else float(path_length)
+                    scores.append(
+                        RelevanceScore(
+                            entity_id=entity_id,
+                            entity_name=entity_name,
+                            entity_type=entity_type,
+                            total_score=0.0,
+                            semantic_similarity=0.0,
+                            textual_similarity=0.0,
+                            path_length=safe_length,
+                            path_decay_factor=0.0,
+                            path_info={},
+                            file_path=entity.get('file_path', ''),
+                        )
+                    )
+                    continue
+
+                path_decay_factor = self.beta ** float(path_length)
+                semantic_similarity = self.embedding_generator.compute_cosine_similarity(
+                    problem_embedding,
+                    entity_embedding,
                 )
-                scores.append(score)
-                
-            except Exception as e:
-                entity_id = entity.get('id', 'unknown')
-                self.logger.warning(f"Error scoring entity {entity_id}: {e}")
-                continue
-        
-        # Sort by total score (descending)
-        scores.sort(key=lambda x: x.total_score, reverse=True)
-        
-        # Return top-k results
-        top_scores = scores[:top_k]
-        
-        self.logger.info(f"Top {len(top_scores)} entities ranked. "
-                        f"Score range: {top_scores[0].total_score:.4f} - {top_scores[-1].total_score:.4f}")
-        
-        return top_scores
+                textual_similarity = self._calculate_textual_similarity(problem_text, entity_text)
+                similarity_score = (self.alpha * semantic_similarity + (1 - self.alpha) * textual_similarity)
+                total_score = path_decay_factor * similarity_score
+
+                scores.append(
+                    RelevanceScore(
+                        entity_id=entity_id,
+                        entity_name=entity_name,
+                        entity_type=entity_type,
+                        total_score=total_score,
+                        semantic_similarity=semantic_similarity,
+                        textual_similarity=textual_similarity,
+                        path_length=float(path_length),
+                        path_decay_factor=path_decay_factor,
+                        path_info={'length': float(path_length)},
+                        file_path=entity.get('file_path', ''),
+                    )
+                )
+
+            scores.sort(key=lambda x: x.total_score, reverse=True)
+            top_scores = scores[:top_k]
+
+            if top_scores:
+                self.logger.info(
+                    f"Top {len(top_scores)} entities ranked. "
+                    f"Score range: {top_scores[0].total_score:.4f} - {top_scores[-1].total_score:.4f}"
+                )
+
+            return top_scores
+
+        finally:
+            if is_virtual and starting_node_id in graph:
+                edges_to_remove = list(graph.edges(starting_node_id))
+                graph.remove_edges_from(edges_to_remove)
+                graph.remove_node(starting_node_id)
     
     def _calculate_semantic_similarity(self, text1: str, text2: str) -> float:
         """
@@ -252,10 +320,17 @@ class RelevanceScorer:
             Normalized Levenshtein similarity [0, 1]
         """
         try:
-            # Use SequenceMatcher for Levenshtein-like similarity
-            similarity = SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
-            return float(similarity)
-            
+            # OPT-7: lightweight token overlap (Jaccard) instead of SequenceMatcher.
+            tokens1 = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text1.lower()))
+            tokens2 = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text2.lower()))
+
+            if not tokens1 or not tokens2:
+                return 0.0
+
+            inter = len(tokens1 & tokens2)
+            union = len(tokens1 | tokens2)
+            return float(inter / union) if union else 0.0
+
         except Exception as e:
             self.logger.warning(f"Error calculating textual similarity: {e}")
             return 0.0

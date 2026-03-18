@@ -5,6 +5,8 @@ Main entry point for the fair side-by-side evaluation of GATeR vs TARGET.
 Usage:
     python -m evaluation.run_fair_evaluation [--sample-size 500] [--seed 42]
                                               [--skip-gater-run]
+                                              [--projects <owner/repo> ...]
+                                              [--repo-store-manifest <path>]
                                               [--output-dir evaluation/results]
 """
 
@@ -33,6 +35,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from evaluation.fair_eval_config import (
     EVAL_OUTPUT_DIR,
+    EVAL_REPO_STORE_MANIFEST,
+    EVAL_STORES_DIR,
     GATER_ROOT,
     RANDOM_SEED,
     SAMPLE_SIZE,
@@ -46,6 +50,7 @@ from evaluation.tarbench_bridge import (
     build_evaluation_dataset,
     extract_ground_truth,
 )
+from evaluation.repo_store_manager import RepoStoreResolver
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +62,7 @@ logger = logging.getLogger("evaluation.runner")
 
 # ── GATeR repair runner ───────────────────────────────────────────────────────
 
-def run_gater_on_record(record: dict) -> Dict:
+def run_gater_on_record(record: dict, engine) -> Dict:
     """
     Run GATeR's repair pipeline on one evaluation record.
 
@@ -67,15 +72,12 @@ def run_gater_on_record(record: dict) -> Dict:
       - success: bool
       - time_s: float
     """
-    from src.gatr.gatr_engine import GATREngine
-
     gater_input = record["gater_input"]
     broken_test = gater_input["broken_test"]
     error_message = gater_input["error_message"]
     project = record["project"]
 
     try:
-        engine = GATREngine()
         start = time.time()
         result = engine.repair_test(
             broken_test=broken_test,
@@ -98,6 +100,8 @@ def run_gater_on_record(record: dict) -> Dict:
             "success": result.success,
             "strategy": result.repair_strategy,
             "time_s": elapsed,
+            "kuzu_db_path": getattr(engine, "kuzu_db_path", ""),
+            "lancedb_path": getattr(engine, "lancedb_path", ""),
         }
     except Exception as e:
         logger.warning(f"GATeR failed on {record['id']}: {e}")
@@ -188,6 +192,8 @@ def run_evaluation(
     sample_size: int = SAMPLE_SIZE,
     seed: int = RANDOM_SEED,
     skip_gater: bool = False,
+    projects: Optional[List[str]] = None,
+    repo_store_manifest: Optional[Path] = None,
     output_dir: Optional[Path] = None,
 ):
     """
@@ -201,11 +207,22 @@ def run_evaluation(
     output_dir = Path(output_dir) if output_dir else EVAL_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    manifest_path = Path(repo_store_manifest) if repo_store_manifest else EVAL_REPO_STORE_MANIFEST
+    repo_store_resolver = RepoStoreResolver(
+        manifest_path=manifest_path,
+        stores_root=EVAL_STORES_DIR,
+    )
+    logger.info(f"Repo-store manifest: {manifest_path}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # ── Step 1: Build evaluation dataset ─────────────────────────────────
     logger.info("Step 1 / 5: Building stratified evaluation dataset ...")
-    records = build_evaluation_dataset(sample_size=sample_size, seed=seed)
+    records = build_evaluation_dataset(
+        sample_size=sample_size,
+        seed=seed,
+        project_keys=projects,
+    )
 
     # Save the sampled IDs for reproducibility
     sample_ids = [r["id"] for r in records]
@@ -218,9 +235,28 @@ def run_evaluation(
     gater_results = {}
     if not skip_gater:
         logger.info("Step 2 / 5: Running GATeR on sampled test cases ...")
+        from src.gatr.gatr_engine import GATREngine
+
+        engines_by_project: Dict[str, GATREngine] = {}
+
         for i, rec in enumerate(records):
             logger.info(f"  [{i+1}/{len(records)}] {rec['id']} ({rec['project']})")
-            gater_results[rec["id"]] = run_gater_on_record(rec)
+            project = rec["project"]
+
+            if project not in engines_by_project:
+                store_paths = repo_store_resolver.get(project)
+                logger.info(
+                    "    Using stores for %s | kuzu=%s | lancedb=%s",
+                    project,
+                    store_paths.get("kuzu_db_path", ""),
+                    store_paths.get("lancedb_path", ""),
+                )
+                engines_by_project[project] = GATREngine(
+                    kuzu_db_path=store_paths.get("kuzu_db_path"),
+                    lancedb_path=store_paths.get("lancedb_path"),
+                )
+
+            gater_results[rec["id"]] = run_gater_on_record(rec, engines_by_project[project])
     else:
         logger.info("Step 2 / 5: Skipped GATeR run (--skip-gater-run)")
         # Try to load previous GATeR results
@@ -626,6 +662,21 @@ def main():
         help="Skip running GATeR; only compute TARGET metrics on the subset",
     )
     parser.add_argument(
+        "--projects",
+        nargs="*",
+        default=None,
+        help="Restrict evaluation to specific TaRBench project keys (owner/repo)",
+    )
+    parser.add_argument(
+        "--repo-store-manifest",
+        type=str,
+        default=str(EVAL_REPO_STORE_MANIFEST),
+        help=(
+            "Manifest JSON mapping project keys to per-project Kuzu/LanceDB paths "
+            f"(default: {EVAL_REPO_STORE_MANIFEST})"
+        ),
+    )
+    parser.add_argument(
         "--output-dir", type=str, default=str(EVAL_OUTPUT_DIR),
         help=f"Directory for results (default: {EVAL_OUTPUT_DIR})",
     )
@@ -635,6 +686,8 @@ def main():
         sample_size=args.sample_size,
         seed=args.seed,
         skip_gater=args.skip_gater_run,
+        projects=args.projects,
+        repo_store_manifest=Path(args.repo_store_manifest),
         output_dir=Path(args.output_dir),
     )
 

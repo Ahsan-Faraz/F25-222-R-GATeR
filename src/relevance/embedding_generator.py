@@ -10,6 +10,7 @@ import hashlib
 import pickle
 import os
 from pathlib import Path
+from collections import OrderedDict
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -36,7 +37,8 @@ class EmbeddingGenerator:
     def __init__(self, 
                  model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  cache_dir: str = "workspace/embeddings_cache",
-                 device: str = "auto"):
+                 device: str = "auto",
+                 memory_cache_size: int = 4096):
         """
         Initialize embedding generator
         
@@ -44,14 +46,19 @@ class EmbeddingGenerator:
             model_name: Name of the embedding model to use
             cache_dir: Directory to cache embeddings
             device: Device to run model on ('cpu', 'cuda', or 'auto')
+            memory_cache_size: Number of embeddings to keep in in-memory LRU cache
         """
         self.model_name = model_name
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.memory_cache_size = memory_cache_size
         
         self.logger = logging.getLogger(__name__)
         self.model = None
         self.tokenizer = None
+        self.model_type = None
+        self._memory_cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
+        self._model_initialized = False
         
         # Set device
         if device == "auto":
@@ -61,8 +68,13 @@ class EmbeddingGenerator:
                 self.device = "cpu"
         else:
             self.device = device
-            
+
+    def _ensure_model_loaded(self):
+        """Lazy-load embedding model on first real embedding request."""
+        if self._model_initialized:
+            return
         self._initialize_model()
+        self._model_initialized = True
         
     def _initialize_model(self):
         """Initialize the embedding model"""
@@ -101,23 +113,44 @@ class EmbeddingGenerator:
     
     def _load_from_cache(self, text: str) -> Optional[np.ndarray]:
         """Load embedding from cache"""
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+
+        # Fast in-memory LRU cache first.
+        if text_hash in self._memory_cache:
+            emb = self._memory_cache.pop(text_hash)
+            self._memory_cache[text_hash] = emb
+            return emb
+
         cache_path = self._get_cache_path(text)
         if cache_path.exists():
             try:
                 with open(cache_path, 'rb') as f:
-                    return pickle.load(f)
+                    embedding = pickle.load(f)
+                self._remember_in_memory(text_hash, embedding)
+                return embedding
             except Exception as e:
                 self.logger.warning(f"Failed to load cached embedding: {e}")
         return None
     
     def _save_to_cache(self, text: str, embedding: np.ndarray):
         """Save embedding to cache"""
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        self._remember_in_memory(text_hash, embedding)
+
         cache_path = self._get_cache_path(text)
         try:
             with open(cache_path, 'wb') as f:
                 pickle.dump(embedding, f)
         except Exception as e:
             self.logger.warning(f"Failed to cache embedding: {e}")
+
+    def _remember_in_memory(self, text_hash: str, embedding: np.ndarray):
+        """Maintain bounded in-memory LRU embedding cache."""
+        if text_hash in self._memory_cache:
+            self._memory_cache.pop(text_hash)
+        self._memory_cache[text_hash] = embedding
+        if len(self._memory_cache) > self.memory_cache_size:
+            self._memory_cache.popitem(last=False)
     
     
     def generate_embedding(self, text: str, use_cache: bool = True) -> np.ndarray:
@@ -141,6 +174,7 @@ class EmbeddingGenerator:
                 return cached_embedding
         
         # Generate embedding
+        self._ensure_model_loaded()
         embedding = self._generate_embedding_internal(text)
         
         # Cache the result
@@ -200,6 +234,7 @@ class EmbeddingGenerator:
         
         # Generate embeddings for uncached texts
         if uncached_texts:
+            self._ensure_model_loaded()
             if self.model_type == "sentence_transformers":
                 batch_embeddings = self.model.encode(uncached_texts, convert_to_numpy=True)
             else:
@@ -329,5 +364,6 @@ class EmbeddingGenerator:
         
         return {
             "cached_embeddings": len(cache_files),
-            "cache_size_mb": total_size / (1024 * 1024)
+            "cache_size_mb": total_size / (1024 * 1024),
+            "memory_cached_embeddings": len(self._memory_cache)
         }

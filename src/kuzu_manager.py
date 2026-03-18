@@ -330,9 +330,24 @@ class KuzuManager:
                 batch = entities[batch_start:batch_end]
                 
                 logger.debug(f"Processing batch {batch_start//batch_size + 1}/{(total_entities + batch_size - 1)//batch_size} ({batch_start+1}-{batch_end} of {total_entities})")
-                
-                batch_inserted = 0
+
+                # Fast path: batch all CodeEntity rows.
+                code_entities = []
+                non_code_entities = []
                 for entity in batch:
+                    entity_type = entity.get('type', '')
+                    if entity_type in ['commit', 'issue', 'pull_request', 'repository']:
+                        non_code_entities.append(entity)
+                    else:
+                        code_entities.append(entity)
+
+                batch_inserted = 0
+                if code_entities:
+                    inserted = self._insert_code_entities_batch(code_entities)
+                    batch_inserted += inserted
+                    inserted_count += inserted
+
+                for entity in non_code_entities:
                     entity_type = entity.get('type', '')
                     entity_id = entity.get('id', '')
                     
@@ -379,6 +394,68 @@ class KuzuManager:
             
         logger.info(f"SUCCESS: Inserted {inserted_count} entities into Kuzu database")
         return inserted_count, updated_count
+
+    def _insert_code_entities_batch(self, entities: List[Dict[str, Any]]) -> int:
+        """Batch-insert CodeEntity rows using UNWIND; falls back to row inserts if needed."""
+        if not entities:
+            return 0
+
+        try:
+            rows = []
+            for entity in entities:
+                entity_id = entity.get('id', '')
+                if not entity_id:
+                    continue
+
+                rows.append({
+                    'id': entity_id,
+                    'name': entity.get('name', ''),
+                    'type': entity.get('type', ''),
+                    'file_path': entity.get('file_path', ''),
+                    'line_start': entity.get('line_start') or 0,
+                    'line_end': entity.get('line_end') or 0,
+                    'parameters': str(entity.get('parameters', [])) if entity.get('parameters') else '',
+                    'is_test': entity.get('is_test', False),
+                    'full_path': entity.get('full_path', ''),
+                    'methods': str(entity.get('methods', [])) if entity.get('methods') else '',
+                    'base_classes': str(entity.get('base_classes', [])) if entity.get('base_classes') else '',
+                    'import_type': entity.get('import_type', ''),
+                    'from_module': entity.get('from_module', ''),
+                    'line': entity.get('line') or 0,
+                    'is_placeholder': entity.get('is_placeholder', False),
+                })
+
+            if not rows:
+                return 0
+
+            query = """
+            UNWIND $rows AS row
+            MERGE (c:CodeEntity {id: row.id})
+            SET c.name = row.name,
+                c.type = row.type,
+                c.file_path = row.file_path,
+                c.line_start = row.line_start,
+                c.line_end = row.line_end,
+                c.parameters = row.parameters,
+                c.is_test = row.is_test,
+                c.full_path = row.full_path,
+                c.methods = row.methods,
+                c.base_classes = row.base_classes,
+                c.import_type = row.import_type,
+                c.from_module = row.from_module,
+                c.line = row.line,
+                c.is_placeholder = row.is_placeholder
+            """
+            self.connection.execute(query, {'rows': rows})
+            return len(rows)
+
+        except Exception as e:
+            logger.debug(f"CodeEntity batch insert fallback: {e}")
+            inserted = 0
+            for entity in entities:
+                if self._insert_code_entity(entity):
+                    inserted += 1
+            return inserted
     
     def _insert_code_entity(self, entity: Dict[str, Any]) -> bool:
         """Insert a code entity"""
@@ -577,26 +654,97 @@ class KuzuManager:
             return 0
             
         inserted_count = 0
-        
+
         try:
+            # Deduplicate to reduce MERGE workload.
+            deduped = []
+            seen = set()
             for rel in relationships:
                 rel_type = rel.get('type', '').upper()
                 source_id = rel.get('source', '')
                 target_id = rel.get('target', '')
-                
                 if not all([rel_type, source_id, target_id]):
-                    logger.warning(f"Skipping incomplete relationship: {rel}")
                     continue
-                
-                success = self._insert_relationship(source_id, target_id, rel_type, rel)
-                if success:
-                    inserted_count += 1
-                    
+                key = (rel_type, source_id, target_id, str(rel.get('properties', '')))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(rel)
+
+            rel_mapping = {
+                'BELONGS_TO': ('CodeEntity', 'CodeEntity'),
+                'CALLS': ('CodeEntity', 'CodeEntity'),
+                'IMPORTS': ('CodeEntity', 'CodeEntity'),
+                'TESTS': ('CodeEntity', 'CodeEntity'),
+                'MODIFIES': ('Commit', 'CodeEntity'),
+                'MENTIONS_ISSUE': ('Commit', 'Issue'),
+                'MENTIONS_PR': ('Commit', 'PullRequest'),
+                'CREATES': ('CodeEntity', 'CodeEntity'),
+                'USES': ('CodeEntity', 'CodeEntity')
+            }
+
+            # Group by relationship type for batched UNWIND inserts.
+            grouped: Dict[str, List[Dict[str, Any]]] = {}
+            for rel in deduped:
+                rel_type = rel.get('type', '').upper()
+                if rel_type not in rel_mapping:
+                    continue
+                grouped.setdefault(rel_type, []).append(rel)
+
+            batch_size = int(os.getenv('KUZU_REL_BATCH_SIZE', '1000'))
+            for rel_type, rels in grouped.items():
+                source_table, target_table = rel_mapping[rel_type]
+                for i in range(0, len(rels), batch_size):
+                    chunk = rels[i:i + batch_size]
+                    if self._insert_relationship_batch(chunk, rel_type, source_table, target_table):
+                        inserted_count += len(chunk)
+                    else:
+                        # Safe fallback path for compatibility.
+                        for rel in chunk:
+                            if self._insert_relationship(
+                                rel.get('source', ''),
+                                rel.get('target', ''),
+                                rel_type,
+                                rel,
+                            ):
+                                inserted_count += 1
+
         except Exception as e:
             logger.error(f"ERROR: Error inserting relationships: {e}")
-        
+
         logger.info(f"SUCCESS: Inserted {inserted_count} relationships into Kuzu database")
         return inserted_count
+
+    def _insert_relationship_batch(self,
+                                   relationships: List[Dict[str, Any]],
+                                   rel_type: str,
+                                   source_table: str,
+                                   target_table: str) -> bool:
+        """Insert relationship batch using UNWIND for fewer round-trips."""
+        if not relationships:
+            return True
+
+        try:
+            rows = [
+                {
+                    'source_id': rel.get('source', ''),
+                    'target_id': rel.get('target', ''),
+                    'properties': str(rel.get('properties', '')),
+                }
+                for rel in relationships
+            ]
+
+            query = f"""
+            UNWIND $rows AS row
+            MATCH (s:{source_table} {{id: row.source_id}}), (t:{target_table} {{id: row.target_id}})
+            MERGE (s)-[r:{rel_type}]->(t)
+            SET r.properties = row.properties
+            """
+            self.connection.execute(query, {'rows': rows})
+            return True
+        except Exception as e:
+            logger.debug(f"Batch insert fallback for {rel_type}: {e}")
+            return False
     
     def _insert_relationship(self, source_id: str, target_id: str, rel_type: str, rel_data: Dict[str, Any]) -> bool:
         """Insert a single relationship"""

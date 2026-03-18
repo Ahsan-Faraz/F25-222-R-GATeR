@@ -50,9 +50,17 @@ def compute_bleu(references: List[str], hypotheses: List[str]) -> float:
     """
     from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
+    if not references or not hypotheses:
+        return 0.0
+
+    # Keep reference/hypothesis lists aligned to avoid invalid corpus input.
+    pairs = list(zip(references, hypotheses))
+    if not pairs:
+        return 0.0
+
     tokenize = lambda s: normalize_code(s).split()
-    refs = [[tokenize(r)] for r in references]
-    hyps = [tokenize(h) for h in hypotheses]
+    refs = [[tokenize(r)] for r, _ in pairs]
+    hyps = [tokenize(h) for _, h in pairs]
 
     if not refs or not hyps:
         return 0.0
@@ -102,6 +110,11 @@ def compute_codebleu(
         score = calc_code_bleu([norm_refs], norm_hyps, lang=lang)
         return round(100 * score, 2)
     except Exception as e:
+        # Restore Fraction before NLTK BLEU fallback; NLTK imports Fraction
+        # and fails if it is still monkey-patched in this scope.
+        if _orig_fraction is not None:
+            import fractions
+            fractions.Fraction = _orig_fraction
         logger.warning(f"CodeBLEU unavailable ({e}), falling back to BLEU")
         return compute_bleu(references, hypotheses)
     finally:

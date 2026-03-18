@@ -9,6 +9,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple, Set
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import tree_sitter_python as tspython
 import tree_sitter_java as tsjava
 from tree_sitter import Language, Parser, Node
@@ -81,16 +82,21 @@ class CodeParser:
             return None
     
     def _extract_entities(self, node: Node, entities: Dict, content: bytes, language: str):
-        """Recursively extract entities from AST nodes"""
-        
-        if language == 'python':
-            self._extract_python_entities(node, entities, content)
-        elif language == 'java':
-            self._extract_java_entities(node, entities, content)
-        
-        # Recursively process child nodes
-        for child in node.children:
-            self._extract_entities(child, entities, content, language)
+        """Extract entities from AST nodes using iterative DFS (non-recursive)."""
+
+        stack = [node]
+        while stack:
+            current = stack.pop()
+
+            if language == 'python':
+                self._extract_python_entities(current, entities, content)
+            elif language == 'java':
+                self._extract_java_entities(current, entities, content)
+
+            # Push in reverse so traversal order remains stable.
+            children = current.named_children
+            for child in reversed(children):
+                stack.append(child)
 
     def _extract_python_entities(self, node: Node, entities: Dict, content: bytes):
         """Extract entities from Python AST nodes"""
@@ -873,19 +879,26 @@ class ProjectParser:
         supported_files = self._find_supported_files(project_path)
         
         logger.info(f"Found {len(supported_files)} supported files to parse")
-        
-        for file_path in supported_files:
-            try:
-                relative_path = str(file_path.relative_to(project_path))
-                entities = self.code_parser.parse_file(str(file_path))
-                
-                if entities:
-                    all_entities['files'][relative_path] = entities
-                    all_entities['total_files'] += 1
-                    logger.debug(f"Parsed {relative_path}")
-                
-            except Exception as e:
-                logger.error(f"Error parsing {file_path}: {e}")
+
+        max_workers = min(32, max(4, (os.cpu_count() or 8)))
+
+        def _parse_single(file_path: Path):
+            relative_path = str(file_path.relative_to(project_path))
+            entities = self.code_parser.parse_file(str(file_path))
+            return relative_path, entities
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_parse_single, file_path): file_path for file_path in supported_files}
+            for future in as_completed(futures):
+                file_path = futures[future]
+                try:
+                    relative_path, entities = future.result()
+                    if entities:
+                        all_entities['files'][relative_path] = entities
+                        all_entities['total_files'] += 1
+                        logger.debug(f"Parsed {relative_path}")
+                except Exception as e:
+                    logger.error(f"Error parsing {file_path}: {e}")
         
         logger.info(f"Successfully parsed {all_entities['total_files']} files")
         return all_entities

@@ -7,30 +7,64 @@ comparing GATeR (RAG-based) vs TARGET (fine-tuned) on the same TaRBench subset.
 import os
 from pathlib import Path
 
+
+def _resolve_path(env_key: str, default_path: str, fallback_paths: list[str]) -> Path:
+    """
+    Resolve a path from env/default and fall back to first existing candidate.
+    """
+    raw = os.getenv(env_key, default_path)
+    primary = Path(raw)
+    if primary.exists():
+        return primary
+
+    for candidate in fallback_paths:
+        p = Path(candidate)
+        if p.exists():
+            return p
+
+    return primary
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
-TARBENCH_ROOT = Path(os.getenv(
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+TARBENCH_ROOT = _resolve_path(
     "TARBENCH_ROOT",
-    r"d:\Desktop\Target\TaRGET\fine-tuning\TaRBench\TaRBench"
-))
+    r"d:\Desktop\Target\TaRGET\fine-tuning\TaRBench\TaRBench",
+    [
+        str(PROJECT_ROOT / "25008893" / "TaRBench" / "TaRBench"),
+    ],
+)
 TARBENCH_PROJECTS_DIR = TARBENCH_ROOT / "projects"
 TARBENCH_SPLITS_CSV = TARBENCH_ROOT / "splits.csv"
 
 # TARGET pre-computed results
-TARGET_RESULTS_DIR = Path(os.getenv(
+TARGET_RESULTS_DIR = _resolve_path(
     "TARGET_RESULTS_DIR",
-    r"d:\Desktop\Target\TaRGET\fine-tuning\TaRGet_Results\TaRGet_Results\Best_on_TaRBench"
-))
+    r"d:\Desktop\Target\TaRGET\fine-tuning\TaRGet_Results\TaRGet_Results\Best_on_TaRBench",
+    [
+        str(PROJECT_ROOT / "25008893" / "TaRGet_Results" / "TaRGet_Results" / "Best_on_TaRBench"),
+        str(PROJECT_ROOT / "25008893" / "TaRGet_Results" / "TaRGet_Results"),
+    ],
+)
 TARGET_PREDICTIONS_FILE = TARGET_RESULTS_DIR / "test_predictions.json"
 TARGET_VERDICTS_FILE = TARGET_RESULTS_DIR / "test_verdicts.json"
 
 # GATeR project root
-GATER_ROOT = Path(os.getenv(
+GATER_ROOT = _resolve_path(
     "GATER_ROOT",
-    r"c:\Users\Lenovo\Desktop\F25-222-R-GATeR"
-))
+    r"c:\Users\Lenovo\Desktop\F25-222-R-GATeR",
+    [str(PROJECT_ROOT)],
+)
 
 # Output directory for evaluation results
 EVAL_OUTPUT_DIR = GATER_ROOT / "evaluation" / "results"
+
+# Per-project repository and store roots used for evaluation preprocessing.
+EVAL_REPOS_DIR = Path(os.getenv("EVAL_REPOS_DIR", str(GATER_ROOT / "workspace" / "repos_eval")))
+EVAL_STORES_DIR = Path(os.getenv("EVAL_STORES_DIR", str(GATER_ROOT / "workspace" / "eval_stores")))
+EVAL_REPO_STORE_MANIFEST = Path(
+    os.getenv("EVAL_REPO_STORE_MANIFEST", str(EVAL_STORES_DIR / "repo_store_manifest.json"))
+)
 
 # ── Sampling Parameters ────────────────────────────────────────────────────────
 # Stratified sampling from TaRBench test split for fair side-by-side comparison.
@@ -66,9 +100,20 @@ ANALYSIS_METRICS = [
     "avg_edit_distance",   # Levenshtein distance to ground truth
 ]
 
-# ── GATeR Configuration ───────────────────────────────────────────────────────
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-coder:6.7b")
+# ── GATeR LLM Configuration (LM Studio) ──────────────────────────────────────
+LM_STUDIO_BASE_URL = os.getenv(
+    "LM_STUDIO_BASE_URL",
+    os.getenv("OLLAMA_BASE_URL", "http://localhost:1234/v1"),
+)
+LM_STUDIO_MODEL = os.getenv(
+    "LM_STUDIO_MODEL",
+    os.getenv("OLLAMA_MODEL", "deepseek/deepseek-r1-0528-qwen3-8b"),
+)
+LM_STUDIO_API_KEY = os.getenv("LM_STUDIO_API_KEY", "lm-studio")
+
+# Backward-compatible aliases for older imports.
+OLLAMA_BASE_URL = LM_STUDIO_BASE_URL
+OLLAMA_MODEL = LM_STUDIO_MODEL
 
 # ── TARGET Baseline Stats (from pre-computed results on full test set) ────────
 # These are used for reference comparison. For the fair evaluation,

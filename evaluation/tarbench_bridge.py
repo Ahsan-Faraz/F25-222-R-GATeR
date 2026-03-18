@@ -313,6 +313,7 @@ def _pick_best_pred(target: str, preds: List[str]) -> str:
 def build_evaluation_dataset(
     sample_size: int = SAMPLE_SIZE,
     seed: int = RANDOM_SEED,
+    project_keys: Optional[List[str]] = None,
 ) -> List[dict]:
     """
     End-to-end: load TaRBench test split → stratified sample → convert for
@@ -325,6 +326,22 @@ def build_evaluation_dataset(
       - target_pred: {target, preds, best_pred, exact_match, plausible}
     """
     test_cases = load_tarbench_test_cases()
+
+    if project_keys:
+        project_set = {p.strip() for p in project_keys if p and p.strip()}
+        test_cases = [c for c in test_cases if c.get("project") in project_set]
+        logger.info(
+            "Filtered test cases to %d records across %d project(s): %s",
+            len(test_cases),
+            len(project_set),
+            ", ".join(sorted(project_set)),
+        )
+        if not test_cases:
+            raise ValueError("No TaRBench test cases found for requested project filter")
+
+        # Prevent requesting more samples than available after filtering.
+        sample_size = min(sample_size, len(test_cases))
+
     sample = stratified_sample(test_cases, n=sample_size, seed=seed)
 
     sample_ids = {c["ID"] for c in sample}
