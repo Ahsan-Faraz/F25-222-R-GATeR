@@ -544,8 +544,8 @@ class GATREngine:
                 diff_content = '\n'.join(difflib.unified_diff(
                     original_code.splitlines(keepends=True),
                     repaired_code.splitlines(keepends=True),
-                    fromfile='original_test.py',
-                    tofile='repaired_test.py',
+                    fromfile='original_test',
+                    tofile='repaired_test',
                     lineterm=''
                 ))
             
@@ -655,8 +655,8 @@ class GATREngine:
             repaired_lines[-1] += '\n'
         
         # Generate unified diff
-        from_file = f"a/{test_file}" if test_file else f"a/{test_name}.py"
-        to_file = f"b/{test_file}" if test_file else f"b/{test_name}.py"
+        from_file = f"a/{test_file}" if test_file else f"a/{test_name}"
+        to_file = f"b/{test_file}" if test_file else f"b/{test_name}"
         
         diff = difflib.unified_diff(
             original_lines,
@@ -690,7 +690,7 @@ class GATREngine:
             
             # Get original code
             original_code = broken_test.get('test_code', '')
-            test_file = broken_test.get('test_file', f'{test_name}.py')
+            test_file = broken_test.get('test_file', test_name)
             
             # Generate unified diff (patch file)
             diff_content = self._generate_unified_diff(
@@ -1241,6 +1241,27 @@ class GATREngine:
         if type_match:
             info['wrong_method'] = type_match.group(1)
             info['error_type'] = 'type_error'
+            if info['language'] == 'unknown':
+                info['language'] = 'python'
+        
+        # ImportError / ModuleNotFoundError
+        import_match = re.search(r"(?:ImportError|ModuleNotFoundError).*?(?:cannot import name\s+'(\w+)'|No module named\s+'([\w.]+)')", error_message)
+        if import_match:
+            info['wrong_method'] = import_match.group(1) or import_match.group(2)
+            info['error_type'] = 'import_error'
+            info['language'] = 'python'
+        
+        # IndentationError / SyntaxError (Python-specific)
+        if re.search(r'IndentationError|unexpected indent|unindent does not match', error_message, re.IGNORECASE):
+            info['error_type'] = 'indentation_error'
+            info['language'] = 'python'
+        
+        # AssertionError with message
+        assert_match = re.search(r"AssertionError:\s*(.*)", error_message)
+        if assert_match:
+            info['error_type'] = 'assertion_error'
+            if info['language'] == 'unknown':
+                info['language'] = 'python'
         
         # Extract keywords for search (enhanced)
         words = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', error_message)
@@ -1616,11 +1637,14 @@ class GATREngine:
 
         # Detect language from file path or code patterns
         test_file = augmented_context.get('test_file', '')
-        language = augmented_context.get('language', 'java')
-        if test_file.endswith('.py') or 'def test_' in test_code:
-            language = 'python'
-        elif test_file.endswith('.java') or 'public void' in test_code or '@Test' in test_code:
-            language = 'java'
+        language = augmented_context.get('language', '')
+        if not language:
+            if test_file.endswith('.py') or 'def test_' in test_code or 'import pytest' in test_code:
+                language = 'python'
+            elif test_file.endswith('.java') or 'public void' in test_code or '@Test' in test_code:
+                language = 'java'
+            else:
+                language = 'java'  # TaRBench is Java-dominant
 
         # Extract structured change data
         broken_lines = augmented_context.get('broken_lines', [])
@@ -1629,7 +1653,7 @@ class GATREngine:
         verdict_status = augmented_context.get('verdict_status', 'unknown')
 
         # ── Build the annotated broken test with change markers ──
-        annotated_code = self._annotate_broken_lines(test_code, broken_lines, broken_line_numbers)
+        annotated_code = self._annotate_broken_lines(test_code, broken_lines, broken_line_numbers, language)
 
         # ── Build KG entity context ──
         entities = augmented_context.get('entities', [])
@@ -1670,11 +1694,11 @@ Your task is to repair broken test methods using contextual information from the
 CRITICAL RULES:
 1. You MUST output ONLY the complete repaired {language} method. No explanations, no markdown fences, no commentary.
 2. You MUST make changes to the broken lines. Returning the input unchanged is NEVER acceptable.
-3. Preserve the method signature, annotations (@Test, @Override, etc.), and overall structure.
+3. Preserve the method signature, annotations, and overall structure.
 4. Only modify lines that are actually broken. Keep all other lines identical.
 5. Use the knowledge graph entities and API patterns provided to make informed repairs.
-6. Ensure the output compiles: balanced braces, correct types, valid {language} syntax.
-7. Start your output directly with the first line of code (e.g., @Test or public void)."""
+6. Ensure the output compiles: balanced braces/indentation, correct types, valid {language} syntax.
+7. Start your output directly with the first line of code (no preamble or markdown)."""
 
         # ── User prompt ──
         user_prompt = f"""# BROKEN TEST REPAIR REQUEST
@@ -1706,7 +1730,7 @@ REPAIRED {language.upper()} CODE:
         return system_message, user_prompt
 
     def _annotate_broken_lines(self, test_code: str, broken_lines: List[str],
-                                broken_line_numbers: List[int]) -> str:
+                                broken_line_numbers: List[int], language: str = 'java') -> str:
         """
         Annotate the test code by marking lines that need to change with >>> markers.
         This gives the LLM a clear visual signal of what to fix.
@@ -1715,6 +1739,7 @@ REPAIRED {language.upper()} CODE:
             return test_code
 
         code_lines = test_code.split('\n')
+        comment_char = '#' if language == 'python' else '//'
 
         # Build a set of line numbers to mark (relative to startLine)
         mark_numbers = set(broken_line_numbers) if broken_line_numbers else set()
@@ -1727,7 +1752,7 @@ REPAIRED {language.upper()} CODE:
             stripped = line.strip()
             is_broken = (i in mark_numbers) or (stripped and stripped in broken_line_texts)
             if is_broken:
-                annotated.append(f">>> {line}  // <-- THIS LINE IS BROKEN")
+                annotated.append(f">>> {line}  {comment_char} <-- THIS LINE IS BROKEN")
             else:
                 annotated.append(f"    {line}")
 

@@ -186,7 +186,7 @@ def construct_error_message(case: dict) -> str:
 
     if status == "compile_error":
         msg = (
-            f"Java compilation error at line {line_nums} in {test_name}.\n"
+            f"Compilation error at line {line_nums} in {test_name}.\n"
             f"Failing code: {failing_code}"
         )
     elif status == "failure":
@@ -232,14 +232,23 @@ def tarbench_to_gater_input(case: dict) -> Dict:
         if line_no is not None:
             broken_line_numbers.append(line_no)
 
+    # Detect language from file path
+    b_path = case.get("bPath", "")
+    if b_path.endswith(".py"):
+        detected_language = "python"
+    elif b_path.endswith(".java"):
+        detected_language = "java"
+    else:
+        detected_language = "java"  # TaRBench default
+
     broken_test = {
         "test_name": test_name,
         "test_code": test_code,
-        "test_file": case.get("bPath", ""),
+        "test_file": b_path,
         "test_class": test_class,
         "test_method": test_method,
         "line_number": b_source.get("startLine"),
-        "language": "java",
+        "language": detected_language,
         # Structured change-location metadata for the prompt
         "broken_lines": broken_lines,
         "broken_line_numbers": broken_line_numbers,
