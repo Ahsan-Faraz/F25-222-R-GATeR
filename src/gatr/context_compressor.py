@@ -5,6 +5,7 @@ Steps 2.1-2.6 of the GATR pipeline
 """
 
 import logging
+import math
 import re
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
@@ -145,6 +146,8 @@ class ContextCompressor:
                     kg_score = float(kg_score)
                 except:
                     kg_score = 0.0
+            if not isinstance(kg_score, (int, float)) or math.isnan(kg_score) or math.isinf(kg_score):
+                kg_score = 0.0
             
             # Get semantic similarity
             semantic_score = semantic_scores.get(entity_id, entity.get('semantic_similarity', 0))
@@ -153,6 +156,8 @@ class ContextCompressor:
                     semantic_score = float(semantic_score)
                 except:
                     semantic_score = 0.0
+            if not isinstance(semantic_score, (int, float)) or math.isnan(semantic_score) or math.isinf(semantic_score):
+                semantic_score = 0.0
             
             # Calculate combined score
             combined_score = (self.KG_WEIGHT * kg_score) + (self.SEMANTIC_WEIGHT * semantic_score)

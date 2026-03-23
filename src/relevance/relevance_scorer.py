@@ -310,14 +310,17 @@ class RelevanceScorer:
     
     def _calculate_textual_similarity(self, text1: str, text2: str) -> float:
         """
-        Calculate textual similarity using Levenshtein distance (normalized)
+        Calculate textual similarity using token-level Jaccard overlap.
+        
+        Extracts identifier tokens from both texts and computes
+        |intersection| / |union| as a similarity measure in [0, 1].
         
         Args:
             text1: First text
             text2: Second text
             
         Returns:
-            Normalized Levenshtein similarity [0, 1]
+            Jaccard token similarity [0, 1]
         """
         try:
             # OPT-7: lightweight token overlap (Jaccard) instead of SequenceMatcher.

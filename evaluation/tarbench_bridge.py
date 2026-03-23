@@ -204,16 +204,33 @@ def tarbench_to_gater_input(case: dict) -> Dict:
     """
     Convert one TaRBench test case into the dict that GATREngine.repair_test()
     expects as `broken_test` plus the `error_message` string.
+
+    Now also passes structured change-location data so the LLM prompt can
+    highlight exactly which lines are broken and what kind of repair is needed.
     """
     b_source = case.get("bSource", {})
     test_code = b_source.get("code", "")
     test_name = case.get("name", "")
+    hunk = case.get("hunk", {})
+    verdict = case.get("verdict", {})
 
     # Extract class and method names
     # name format: "org.example.FooTest.testBar()"
     parts = test_name.rsplit(".", 1)
     test_method = parts[-1].rstrip("()") if parts else test_name
     test_class = parts[0].rsplit(".", 1)[-1] if len(parts) > 1 else ""
+
+    # Structured change-location data for prompt enhancement
+    source_changes = hunk.get("sourceChanges", [])
+    broken_lines = []
+    broken_line_numbers = []
+    for sc in source_changes:
+        line_text = sc.get("line", "")
+        line_no = sc.get("lineNo")
+        if line_text:
+            broken_lines.append(line_text)
+        if line_no is not None:
+            broken_line_numbers.append(line_no)
 
     broken_test = {
         "test_name": test_name,
@@ -222,6 +239,13 @@ def tarbench_to_gater_input(case: dict) -> Dict:
         "test_class": test_class,
         "test_method": test_method,
         "line_number": b_source.get("startLine"),
+        "language": "java",
+        # Structured change-location metadata for the prompt
+        "broken_lines": broken_lines,
+        "broken_line_numbers": broken_line_numbers,
+        "hunk_type": hunk.get("type", "MODIFY"),
+        "verdict_status": verdict.get("status", "unknown"),
+        "error_lines": verdict.get("error_lines", []),
         # Extra TaRBench metadata (used by bridge, ignored by GATeR)
         "_tarbench_id": case["ID"],
         "_project": case.get("project", ""),

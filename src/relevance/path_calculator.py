@@ -175,32 +175,20 @@ class PathCalculator:
             return [([source_node], 0.0)]
         
         try:
-            # Use a simple approach: find shortest path, then find alternatives
-            # This is a simplified version - for production, consider using Yen's algorithm
+            # Use NetworkX's shortest_simple_paths (Yen's algorithm)
+            # Returns paths in order of increasing total weight
             paths = []
-            
-            # Get the shortest path first
-            try:
-                shortest_path = nx.shortest_path(
-                    graph, 
-                    source=source_node, 
-                    target=target_node, 
-                    weight=self._get_edge_weight
+            for path in nx.shortest_simple_paths(graph, source_node, target_node,
+                                                  weight=lambda u, v, d: self._get_edge_weight(u, v, d)):
+                path_weight = sum(
+                    self._get_edge_weight(path[i], path[i+1], graph.edges[path[i], path[i+1]])
+                    for i in range(len(path) - 1)
                 )
-                shortest_length = nx.shortest_path_length(
-                    graph, 
-                    source=source_node, 
-                    target=target_node, 
-                    weight=self._get_edge_weight
-                )
-                paths.append((shortest_path, float(shortest_length)))
-                
-            except nx.NetworkXNoPath:
-                return []
+                paths.append((path, path_weight))
+                if len(paths) >= k:
+                    break
             
-            # For simplicity, return just the shortest path
-            # In a full implementation, you'd use Yen's k-shortest paths algorithm
-            return paths[:k]
+            return paths
             
         except Exception as e:
             self.logger.warning(f"Error finding k shortest paths: {e}")

@@ -6,20 +6,11 @@ Alternative to Step6VectorStorage for faster startup
 import os
 import logging
 import time
-import signal
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-
-class TimeoutError(Exception):
-    """Custom timeout error"""
-    pass
-
-
-def timeout_handler(signum, frame):
-    raise TimeoutError("Model loading timed out")
 
 
 class LightweightVectorStorage:
@@ -52,37 +43,29 @@ class LightweightVectorStorage:
         logger.info(f"Initialized LightweightVectorStorage with workspace: {workspace_dir}")
 
     def _load_model_with_timeout(self):
-        """Load sentence transformer model with timeout"""
+        """Load sentence transformer model with cross-platform timeout"""
         if self._model is not None:
             return self._model
             
+        def _do_load():
+            from sentence_transformers import SentenceTransformer
+            return SentenceTransformer("all-MiniLM-L6-v2")
+
         try:
-            # Set up timeout signal (Unix/Linux only)
-            if hasattr(signal, 'SIGALRM'):
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(self.timeout)
-            
             logger.info(f"Loading sentence transformer model (timeout: {self.timeout}s)...")
             
-            from sentence_transformers import SentenceTransformer
-            
-            # Try to load a lightweight model first
-            model_name = "all-MiniLM-L6-v2"
-            self._model = SentenceTransformer(model_name)
-            
-            if hasattr(signal, 'SIGALRM'):
-                signal.alarm(0)  # Cancel timeout
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_load)
+                self._model = future.result(timeout=self.timeout)
                 
-            logger.info("✅ Successfully loaded sentence transformer model")
+            logger.info("Successfully loaded sentence transformer model")
             return self._model
             
-        except TimeoutError:
-            logger.error(f"❌ Model loading timed out after {self.timeout} seconds")
+        except FuturesTimeoutError:
+            logger.error(f"Model loading timed out after {self.timeout} seconds")
             raise Exception(f"Model loading timed out after {self.timeout} seconds")
         except Exception as e:
-            if hasattr(signal, 'SIGALRM'):
-                signal.alarm(0)  # Cancel timeout
-            logger.error(f"❌ Failed to load model: {e}")
+            logger.error(f"Failed to load model: {e}")
             raise Exception(f"Failed to load model: {e}")
 
     def _init_lance_manager(self):
@@ -90,19 +73,17 @@ class LightweightVectorStorage:
         if self._lance_manager is None:
             from .lance_manager import LanceManager
             self._lance_manager = LanceManager(
-                db_path=self.db_path,
-                workspace_dir=str(self.workspace_dir)
+                db_path=self.db_path
             )
         return self._lance_manager
 
     def _init_vector_indexer(self):
         """Initialize vector indexer on-demand"""
         if self._vector_indexer is None:
-            self._load_model_with_timeout()  # Ensure model is loaded
+            lance_manager = self._init_lance_manager()
             from .vector_indexer import VectorIndexer
             self._vector_indexer = VectorIndexer(
-                model=self._model,
-                workspace_dir=str(self.workspace_dir)
+                lance_manager=lance_manager
             )
         return self._vector_indexer
 
@@ -114,8 +95,7 @@ class LightweightVectorStorage:
             from .embedding_sync import EmbeddingSync
             self._embedding_sync = EmbeddingSync(
                 lance_manager=lance_manager,
-                vector_indexer=vector_indexer,
-                workspace_dir=str(self.workspace_dir)
+                vector_indexer=vector_indexer
             )
         return self._embedding_sync
 
@@ -196,10 +176,13 @@ class LightweightVectorStorage:
             query_embedding = model.encode([query])
             
             # Search in vector database
-            results = lance_manager.search_similar_vectors(
+            search_result = lance_manager.search_vectors(
+                table_name="code_entity_embeddings",
                 query_vector=query_embedding[0],
                 top_k=top_k
             )
+            
+            results = search_result.get('results', []) if search_result.get('success') else []
             
             # Format results
             formatted_results = []

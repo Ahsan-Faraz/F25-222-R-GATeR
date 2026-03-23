@@ -6,7 +6,7 @@ Handles syncing embeddings from relevance scoring to vector storage
 import logging
 import os
 import numpy as np
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Tuple
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -63,25 +63,24 @@ class EmbeddingSync:
             # Get all entities from knowledge graph (not just specific types)
             graph = kg_manager.graph
             
-            # Collect ALL entities with deduplication by name
-            seen_names: Set[str] = set()
+            # Collect ALL entities with deduplication by (name, file_path)
+            seen_keys: Set[Tuple[str, str]] = set()
             candidates = []
             
             for node_id, node_data in graph.nodes(data=True):
                 entity_name = node_data.get('name', node_id)
                 entity_type = node_data.get('type', 'unknown')
+                file_path = node_data.get('file_path', '')
                 
-                # Skip if already seen (deduplication)
-                if entity_name in seen_names:
+                # Skip if already seen (deduplication by name + file)
+                dedup_key = (entity_name, file_path)
+                if dedup_key in seen_keys:
                     continue
-                seen_names.add(entity_name)
+                seen_keys.add(dedup_key)
                 
                 # Skip empty or invalid names
                 if not entity_name or entity_name == 'None':
                     continue
-                
-                # Get file path
-                file_path = node_data.get('file_path', '')
                 
                 # Skip entities without valid file paths (these are typically function calls, not definitions)
                 # This filters out noisy entities like "parser.parse_food_text" without file context
@@ -100,7 +99,7 @@ class EmbeddingSync:
                     'code_snippet': node_data.get('code', ''),
                 })
             
-            logger.info(f"Found {len(candidates)} unique entities for embedding (from {graph.number_of_nodes()} total nodes)")
+            logger.info(f"Found {len(candidates)} unique entities for embedding (from {graph.number_of_nodes()} total nodes, {len(seen_keys)} unique name+file combos)")
             
             if not candidates:
                 return {
@@ -172,7 +171,7 @@ class EmbeddingSync:
                 'success': True,
                 'vectors_synced': total_inserted,
                 'total_candidates': len(candidates),
-                'unique_entities': len(seen_names),
+                'unique_entities': len(seen_keys),
                 'table_name': self.table_name,
                 'entity_types': type_counts
             }
@@ -274,7 +273,7 @@ class EmbeddingSync:
         try:
             graph = kg_manager.graph
             vectors_to_update = []
-            seen_names: Set[str] = set()
+            seen_keys: Set[Tuple[str, str]] = set()
             
             for entity_id in changed_entities:
                 # Get entity data from graph
@@ -285,18 +284,17 @@ class EmbeddingSync:
                 node_data = graph.nodes[entity_id]
                 entity_name = node_data.get('name', entity_id)
                 entity_type = node_data.get('type', 'unknown')
+                file_path = node_data.get('file_path', '')
                 
-                # Skip duplicates
-                if entity_name in seen_names:
+                # Skip duplicates by (name, file_path)
+                dedup_key = (entity_name, file_path)
+                if dedup_key in seen_keys:
                     continue
-                seen_names.add(entity_name)
+                seen_keys.add(dedup_key)
                 
                 # Skip empty names
                 if not entity_name or entity_name == 'None':
                     continue
-                
-                # Get file path
-                file_path = node_data.get('file_path', '')
                 
                 # Skip entities without valid file paths (these are typically function calls, not definitions)
                 # This filters out noisy entities like "parser.parse_food_text" without file context

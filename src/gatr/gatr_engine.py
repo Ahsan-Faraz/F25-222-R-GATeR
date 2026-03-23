@@ -293,14 +293,16 @@ class GATREngine:
             self.logger.debug(f"LM Studio check failed: {e}")
             return False
     
-    def _call_lm_studio(self, prompt: str, temperature: float = 0.1, max_tokens: int = 4096) -> Optional[str]:
+    def _call_lm_studio(self, prompt: str, temperature: float = 0.1, max_tokens: int = 4096,
+                         system_message: str = None) -> Optional[str]:
         """
         Call LM Studio OpenAI-compatible chat completions API
         
         Args:
-            prompt: The prompt to send
+            prompt: The user prompt to send
             temperature: Sampling temperature (lower = more deterministic)
             max_tokens: Maximum tokens in response
+            system_message: Optional system message to set role/behaviour
             
         Returns:
             Generated text or None if failed
@@ -309,15 +311,19 @@ class GATREngine:
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.lm_studio_api_key}'
         }
+
+        messages = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": prompt})
+
         try:
             response = requests.post(
                 f"{self.lm_studio_url}/chat/completions",
                 headers=headers,
                 json={
                     "model": self.lm_studio_model,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
+                    "messages": messages,
                     "stream": False,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -1092,16 +1098,20 @@ class GATREngine:
             if not self.vector_storage:
                 return alternatives
             
-            # Build semantic queries for alternatives
-            queries = [
-                f"{class_name} Response",  # Most likely: Response class/method
-                f"{class_name} Request",
-                f"{class_name} Builder",
-                f"{class_name} execute",
-                f"{class_name} connection",
-                f"Response object method",
-                wrong_method.replace("Fetch", "Response").replace("fetch", "response"),  # Direct semantic swap
-            ]
+            # Build semantic queries dynamically from the wrong method and class
+            queries = []
+            if class_name:
+                queries.append(f"{class_name} {wrong_method}")
+                queries.append(class_name)
+            if wrong_method:
+                queries.append(wrong_method)
+                # Try common naming variations (camelCase parts)
+                parts = re.findall(r'[A-Z][a-z]+|[a-z]+', wrong_method)
+                if len(parts) > 1:
+                    for part in parts:
+                        queries.append(f"{class_name} {part}" if class_name else part)
+            if language:
+                queries.append(f"{class_name} {language}" if class_name else language)
             
             found_entities = {}
             
@@ -1113,16 +1123,14 @@ class GATREngine:
                     for result in results:
                         entity_name = result.get('entity_name', '')
                         if entity_name and entity_name not in found_entities:
-                            # Boost score if it's clearly a better match
                             score = result.get('score', 0)
                             
-                            # Semantic similarity boosts
-                            if 'response' in entity_name.lower():
-                                score += 0.3
-                            if 'execute' in entity_name.lower():
+                            # Context-sensitive boosts
+                            name_lower = entity_name.lower()
+                            if class_name and class_name.lower() in name_lower:
                                 score += 0.2
-                            if class_name and class_name in entity_name:
-                                score += 0.2
+                            if wrong_method and wrong_method.lower() in name_lower:
+                                score += 0.15
                             
                             found_entities[entity_name] = {
                                 'entity_id': result.get('entity_id', ''),
@@ -1441,6 +1449,7 @@ class GATREngine:
         - Include usage examples
         - Add related test patterns
         - Include project conventions
+        - Pass through structured change-location data for prompt
         """
         self.logger.info("[GraphRAG Step 8] Augmenting context...")
         
@@ -1449,11 +1458,19 @@ class GATREngine:
         augmented = {
             'test': retrieved_context['test'],
             'test_code': test_code,
+            'test_file': broken_test.get('test_file', ''),
             'error': retrieved_context['error'],
             'entities': [],
             'usage_examples': [],
             'test_patterns': [],
-            'conventions': {}
+            'conventions': {},
+            # Structured change-location data for the prompt
+            'language': broken_test.get('language', 'java'),
+            'broken_lines': broken_test.get('broken_lines', []),
+            'broken_line_numbers': broken_test.get('broken_line_numbers', []),
+            'hunk_type': broken_test.get('hunk_type', 'MODIFY'),
+            'verdict_status': broken_test.get('verdict_status', 'unknown'),
+            'error_lines': broken_test.get('error_lines', []),
         }
         
         # Augment each entity with rich context
@@ -1565,13 +1582,14 @@ class GATREngine:
         self.logger.info("[GraphRAG Step 9] Generating fix...")
         
         # Create the enhanced prompt with all context
-        prompt = self._create_graphrag_prompt(augmented_context, error_info)
+        system_message, user_prompt = self._create_graphrag_prompt(augmented_context, error_info)
         
-        self.logger.debug(f"GraphRAG prompt length: {len(prompt)} chars")
+        self.logger.debug(f"GraphRAG prompt length: {len(user_prompt)} chars (system: {len(system_message)} chars)")
         
         # Call LLM
         if self.lm_studio_available:
-            repair = self._call_lm_studio(prompt, temperature=0.1)
+            repair = self._call_lm_studio(user_prompt, temperature=0.2,
+                                           system_message=system_message)
             
             if repair:
                 # Clean and validate
@@ -1586,118 +1604,237 @@ class GATREngine:
         # Fallback to rule-based
         return self._graphrag_fallback_repair(augmented_context, error_info), 'graphrag_fallback'
     
-    def _create_graphrag_prompt(self, augmented_context: Dict, error_info: Dict) -> str:
+    def _create_graphrag_prompt(self, augmented_context: Dict, error_info: Dict) -> Tuple[str, str]:
         """
-        Create rich prompt with all GraphRAG context including semantically similar alternatives
+        Create a high-quality system + user prompt pair using full GraphRAG context.
+
+        Returns:
+            Tuple of (system_message, user_prompt)
         """
         test_code = augmented_context.get('test_code', '')
         error = augmented_context.get('error', '')
-        
-        # Extract error details for better matching
-        class_name = error_info.get('class_name', '')
-        wrong_method = error_info.get('wrong_method', '')
-        parent_class = error_info.get('parent_class', '')
-        
-        # Build semantically relevant alternatives section
-        alternatives_section = ""
+
+        # Detect language from file path or code patterns
+        test_file = augmented_context.get('test_file', '')
+        language = augmented_context.get('language', 'java')
+        if test_file.endswith('.py') or 'def test_' in test_code:
+            language = 'python'
+        elif test_file.endswith('.java') or 'public void' in test_code or '@Test' in test_code:
+            language = 'java'
+
+        # Extract structured change data
+        broken_lines = augmented_context.get('broken_lines', [])
+        broken_line_numbers = augmented_context.get('broken_line_numbers', [])
+        hunk_type = augmented_context.get('hunk_type', 'MODIFY')
+        verdict_status = augmented_context.get('verdict_status', 'unknown')
+
+        # ── Build the annotated broken test with change markers ──
+        annotated_code = self._annotate_broken_lines(test_code, broken_lines, broken_line_numbers)
+
+        # ── Build KG entity context ──
         entities = augmented_context.get('entities', [])
-        
-        # Filter for methods/functions in the same class or returning relevant types
-        relevant_methods = []
-        for entity in entities:
-            if entity['type'] in ('method', 'function', 'class'):
-                # Check if this entity is in the same class or is a Response type (common return)
-                name_lower = entity.get('name', '').lower()
-                if (class_name.lower() in name_lower or 
-                    parent_class and parent_class.lower() in name_lower or
-                    'response' in name_lower or
-                    'connection' in name_lower):
-                    relevant_methods.append(entity)
-        
-        # Sort by relevance score (KGCompass score)
-        relevant_methods.sort(key=lambda x: x.get('score', 0), reverse=True)
-        
-        if relevant_methods:
-            alternatives_section = "\n=== SEMANTICALLY RELEVANT ALTERNATIVES FROM KNOWLEDGE GRAPH ===\n"
-            alternatives_section += f"Wrong method: {class_name}.{wrong_method}()\n"
-            alternatives_section += f"Look for these semantically similar methods/inner classes:\n"
-            
-            for i, entity in enumerate(relevant_methods[:10], 1):
-                name = entity.get('name', '')
-                etype = entity.get('type', 'unknown')
-                score = entity.get('score', 0)
-                alternatives_section += f"\n{i}. {name} (type: {etype}, relevance: {score:.2f})"
-                
-                # Show function signature if available
-                if entity.get('code_snippet'):
-                    lines = entity['code_snippet'].strip().split('\n')
-                    # Find the declaration line
-                    for line in lines[:3]:
-                        if any(kw in line for kw in ['def ', 'public ', 'private ', 'class ', 'interface ']):
-                            alternatives_section += f"\n   Signature: {line.strip()}"
-                            break
-        
-        # Build entity context with code snippets
-        entity_section = "\n=== RELATED ENTITIES FROM KNOWLEDGE GRAPH ==="
-        for i, entity in enumerate(entities[:5], 1):
-            entity_section += f"\n\n{i}. {entity['name']} ({entity['type']}) - Score: {entity['score']:.2f}"
-            if entity.get('file_path'):
-                entity_section += f"\n   File: {entity['file_path']}"
-            if entity.get('docstring'):
-                entity_section += f"\n   Doc: {entity['docstring'][:120]}"
-            if entity.get('code_snippet'):
-                # Show first few lines
-                snippet_lines = entity['code_snippet'].strip().split('\n')[:4]
-                entity_section += f"\n   Code:\n   " + "\n   ".join(snippet_lines)
-        
-        # Build error analysis section
-        error_section = f"""Error Type: {error_info.get('error_type', 'unknown')}
-Problem: {class_name or 'unknown'} has no member '{wrong_method}'
-Expected Return Type: Connection.Response (based on error context)
-"""
-        
-        # Build the complete prompt with focus on semantically similar fixes
-        prompt = f"""You are GATR (Graph-Aware Test Repair). Your task: Fix ONE broken method call using semantically relevant alternatives from the knowledge graph.
+        entity_section = self._build_entity_section(entities)
 
-=== BROKEN TEST CODE ===
-{test_code}
+        # ── Build API delta section ──
+        api_deltas = augmented_context.get('api_deltas', [])
+        delta_section = self._build_delta_section(api_deltas)
 
-=== ERROR MESSAGE ===
+        # ── Build broken lines section ──
+        broken_section = ""
+        if broken_lines:
+            broken_section = "\n## LINES THAT NEED TO CHANGE\n"
+            broken_section += "These specific lines from the broken test are INCORRECT and must be modified:\n"
+            for i, line in enumerate(broken_lines):
+                ln = broken_line_numbers[i] if i < len(broken_line_numbers) else "?"
+                broken_section += f"  Line {ln}: {line}\n"
+            broken_section += "\nYou MUST change at least these lines. Do NOT return them as-is.\n"
+
+        # ── Build canonical usage / similar test patterns ──
+        usage_section = ""
+        canonical_usages = augmented_context.get('canonical_usages', [])
+        if canonical_usages:
+            usage_section = "\n## CORRECT USAGE PATTERNS FROM CODEBASE\n"
+            for i, usage in enumerate(canonical_usages[:5], 1):
+                pattern = usage.get('usage_pattern', '')
+                example = usage.get('example_code', '')
+                if example:
+                    usage_section += f"{i}. {pattern}\n   ```{language}\n   {example}\n   ```\n"
+                elif pattern:
+                    usage_section += f"{i}. {pattern}\n"
+
+        # ── System message ──
+        system_message = f"""You are GATR (Graph-Aware Test Repair), an expert automated test repair system for {language.upper()} projects.
+
+Your task is to repair broken test methods using contextual information from the project's knowledge graph, vector-indexed code, and API change analysis.
+
+CRITICAL RULES:
+1. You MUST output ONLY the complete repaired {language} method. No explanations, no markdown fences, no commentary.
+2. You MUST make changes to the broken lines. Returning the input unchanged is NEVER acceptable.
+3. Preserve the method signature, annotations (@Test, @Override, etc.), and overall structure.
+4. Only modify lines that are actually broken. Keep all other lines identical.
+5. Use the knowledge graph entities and API patterns provided to make informed repairs.
+6. Ensure the output compiles: balanced braces, correct types, valid {language} syntax.
+7. Start your output directly with the first line of code (e.g., @Test or public void)."""
+
+        # ── User prompt ──
+        user_prompt = f"""# BROKEN TEST REPAIR REQUEST
+
+## TEST INFORMATION
+- Test: {augmented_context.get('test', '')}
+- File: {test_file}
+- Language: {language.upper()}
+- Failure Type: {verdict_status}
+- Change Type: {hunk_type}
+
+## ERROR MESSAGE
 {error}
 
-=== ERROR ANALYSIS ===
-{error_section}
-{alternatives_section}
-{entity_section}
+## BROKEN TEST CODE (lines marked with >>> MUST be changed)
+```{language}
+{annotated_code}
+```
+{broken_section}{entity_section}{delta_section}{usage_section}
+## YOUR TASK
+1. Read the error message and identify what is wrong.
+2. Look at the lines marked with >>> — those are the lines that MUST change.
+3. Use the knowledge graph entities above to find correct replacements (method names, class names, parameters, imports).
+4. Output the COMPLETE repaired test method — every line, from the first annotation to the closing brace.
+5. Make ONLY the necessary changes. Keep everything else identical.
 
-=== CRITICAL RULES FOR REPAIR ===
-1. The error says "{class_name}.{wrong_method}" does not exist
-2. Look at the SEMANTICALLY RELEVANT ALTERNATIVES above - these are valid methods/inner classes in the codebase
-3. Choose the MOST SEMANTICALLY SIMILAR one (usually contains 'Response', 'Request', 'Builder', 'Config')
-4. Make ONLY that ONE change - replace the wrong method with the semantically similar correct one
-5. DO NOT modify anything else, DO NOT add code, DO NOT rewrite
-
-=== EXAMPLE PATTERN ===
-If code has: new HttpConnection.Fetch()
-And HttpConnection.Fetch does not exist
-And alternatives show: HttpConnection.Response (score 0.95)
-Then change to: new HttpConnection.Response()
-
-=== YOUR TASK ===
-1. Identify the broken method: "{wrong_method}"
-2. Choose the MOST semantically similar alternative from the list above
-3. Replace ONLY that method name - keep everything else identical
-4. Return the ENTIRE fixed test file with NO explanations, NO markdown, NO comments
-
-OUTPUT FORMAT:
-Return ONLY the complete Python code starting from the first line of the test file.
-Do not include ```python or ``` markers.
-Do not add explanations before or after the code.
-Start your response directly with the code.
-
-REPAIRED TEST CODE:
+REPAIRED {language.upper()} CODE:
 """
-        return prompt
+        return system_message, user_prompt
+
+    def _annotate_broken_lines(self, test_code: str, broken_lines: List[str],
+                                broken_line_numbers: List[int]) -> str:
+        """
+        Annotate the test code by marking lines that need to change with >>> markers.
+        This gives the LLM a clear visual signal of what to fix.
+        """
+        if not broken_lines and not broken_line_numbers:
+            return test_code
+
+        code_lines = test_code.split('\n')
+
+        # Build a set of line numbers to mark (relative to startLine)
+        mark_numbers = set(broken_line_numbers) if broken_line_numbers else set()
+
+        # Also fuzzy-match: if a broken_line text appears in the code, mark it
+        broken_line_texts = set(bl.strip() for bl in broken_lines if bl.strip())
+
+        annotated = []
+        for i, line in enumerate(code_lines, 1):
+            stripped = line.strip()
+            is_broken = (i in mark_numbers) or (stripped and stripped in broken_line_texts)
+            if is_broken:
+                annotated.append(f">>> {line}  // <-- THIS LINE IS BROKEN")
+            else:
+                annotated.append(f"    {line}")
+
+        return '\n'.join(annotated)
+
+    def _build_entity_section(self, entities: List[Dict]) -> str:
+        """Build the knowledge graph entity context section for the prompt."""
+        if not entities:
+            return ""
+
+        section = "\n## KNOWLEDGE GRAPH CONTEXT (ranked by KGCompass + GraphRAG relevance)\n"
+        section += "These entities from the project are most relevant to this repair:\n\n"
+
+        for i, entity in enumerate(entities[:12], 1):
+            name = entity.get('name', '')
+            etype = entity.get('type', 'unknown')
+            score = entity.get('score', 0)
+            file_path = entity.get('file_path', '')
+            docstring = entity.get('docstring', '')
+            snippet = entity.get('code_snippet', '')
+
+            section += f"### {i}. {name} ({etype}) — relevance: {score:.2f}\n"
+            if file_path:
+                section += f"   File: {file_path}\n"
+            if docstring:
+                section += f"   Doc: {docstring[:150]}\n"
+            if snippet:
+                # Show first 8 lines of code
+                snippet_lines = snippet.strip().split('\n')[:8]
+                section += "   ```\n   " + "\n   ".join(snippet_lines) + "\n   ```\n"
+            section += "\n"
+
+        return section
+
+    def _build_delta_section(self, api_deltas: List[Dict]) -> str:
+        """Build the API change/delta section for the prompt."""
+        if not api_deltas:
+            return ""
+
+        section = "\n## API CHANGES DETECTED\n"
+        section += "These API changes may be causing the test failure:\n\n"
+
+        for i, delta in enumerate(api_deltas[:8], 1):
+            entity_name = delta.get('entity_name', '')
+            delta_type = delta.get('delta_type', '')
+            old_pattern = delta.get('old_pattern', '')
+            new_pattern = delta.get('new_pattern', '')
+            confidence = delta.get('confidence', 0)
+
+            section += f"{i}. **{entity_name}** — {delta_type} (confidence: {confidence:.2f})\n"
+            if old_pattern and new_pattern:
+                section += f"   Old: `{old_pattern}`\n"
+                section += f"   New: `{new_pattern}`\n"
+            section += "\n"
+
+        return section
+
+    def _merge_kgcompass_entities(self, graphrag_entities: List[Dict],
+                                  compressed_context) -> List[Dict]:
+        """
+        Merge KGCompass-scored entities from Steps 1-3 with GraphRAG Step 7 entities.
+        
+        KGCompass entities carry the full pipeline signal (tree-sitter → KG → Kuzu →
+        embedding similarity → path decay), while GraphRAG entities carry independent
+        graph-traversal + semantic scores.  We interleave them so the prompt benefits
+        from both, with KGCompass entities prioritised.
+        """
+        # Collect entity IDs already present from GraphRAG
+        seen_ids = {e.get('id', '') for e in graphrag_entities}
+
+        kgcompass_entities = []
+        top_entities = getattr(compressed_context, 'top_entities', None) or []
+
+        for ce in top_entities:
+            if ce.entity_id in seen_ids:
+                # Update existing entity with KGCompass score if it's higher
+                for ge in graphrag_entities:
+                    if ge.get('id') == ce.entity_id:
+                        old_score = ge.get('score', 0)
+                        if ce.combined_score > old_score:
+                            ge['score'] = ce.combined_score
+                            ge['kgcompass_score'] = ce.kg_compass_score
+                        break
+            else:
+                seen_ids.add(ce.entity_id)
+                kgcompass_entities.append({
+                    'id': ce.entity_id,
+                    'name': ce.entity_name,
+                    'type': ce.entity_type,
+                    'file_path': ce.file_path,
+                    'score': ce.combined_score,
+                    'kgcompass_score': ce.kg_compass_score,
+                    'relationship': 'kgcompass_ranked',
+                    'code_snippet': ce.compressed_snippet or '',
+                    'usage_examples': [],
+                    'docstring': ''
+                })
+
+        # Interleave: KGCompass first, then GraphRAG entities not already covered
+        merged = sorted(kgcompass_entities + graphrag_entities,
+                        key=lambda e: e.get('score', 0), reverse=True)
+
+        self.logger.info(
+            f"Merged entities: {len(kgcompass_entities)} KGCompass + "
+            f"{len(graphrag_entities)} GraphRAG → {len(merged)} total"
+        )
+        return merged
     
     def _graphrag_fallback_repair(self, augmented_context: Dict, error_info: Dict) -> str:
         """Fallback repair when LLM fails - makes MINIMAL changes"""
@@ -1789,6 +1926,21 @@ REPAIRED TEST CODE:
         self.logger.info("GraphRAG Step 8: Augmenting context...")
         augmented_context = self._graphrag_augment_context(retrieved_context, broken_test)
         
+        # Merge aggregated data (api_deltas, canonical_usages) into augmented context
+        # so the prompt builder can use them
+        augmented_context['api_deltas'] = aggregated_context.get('api_deltas', [])
+        augmented_context['canonical_usages'] = aggregated_context.get('canonical_usages', [])
+        
+        # ===== CRITICAL: Inject KGCompass-scored entities from Steps 1-3 =====
+        # The GraphRAG Step 7 does its own graph traversal without KGCompass scores.
+        # We merge the KGCompass-scored entities from compressed_context so the prompt
+        # benefits from the full pipeline (tree-sitter → KG → Kuzu → KGCompass → LanceDB).
+        kgcompass_entities = self._merge_kgcompass_entities(
+            augmented_context.get('entities', []),
+            compressed_context
+        )
+        augmented_context['entities'] = kgcompass_entities
+        
         # ===== GraphRAG Step 9: Generate Fix =====
         self.logger.info("GraphRAG Step 9: Generating fix...")
         
@@ -1821,20 +1973,36 @@ REPAIRED TEST CODE:
         output = re.sub(r'\n?```$', '', output, flags=re.MULTILINE)
         output = output.replace('```python', '').replace('```java', '').replace('```', '')
         
-        # Remove common preambles
+        # Remove common preambles like "Here is the repaired code:" etc.
         lines = output.split('\n')
         code_started = False
         clean_lines = []
+        
+        # Java and Python code start indicators
+        java_start = ('public ', 'private ', 'protected ', '@Test', '@Override',
+                      '@Before', '@After', '@Deprecated', 'import ', 'package ')
+        python_start = ('def ', 'class ', 'import ', 'from ', '@', 'async def')
+        all_start = java_start + python_start
         
         for line in lines:
             # Skip empty lines at the start
             if not code_started and not line.strip():
                 continue
             # Detect code start
-            if line.strip().startswith(('def ', 'class ', 'import ', 'from ', '@', 'async def', 'public ', 'private ', 'protected ')):
+            stripped = line.strip()
+            if not code_started and stripped.startswith(all_start):
+                code_started = True
+            # Also detect code by brace/indent patterns
+            if not code_started and (stripped.startswith('{') or
+                                     stripped.startswith('//') or
+                                     (stripped and stripped[0].isalpha() and '(' in stripped)):
                 code_started = True
             if code_started:
                 clean_lines.append(line)
+        
+        # If nothing matched as code start, return everything (let validation catch it)
+        if not clean_lines:
+            return output.strip()
         
         return '\n'.join(clean_lines).strip()
     

@@ -165,7 +165,7 @@ class EmbeddingGenerator:
             Embedding vector as numpy array
         """
         if not text or not text.strip():
-            return np.zeros(768)  # Return zero vector for empty text
+            return np.zeros(384)  # Match all-MiniLM-L6-v2 dimension (384)
         
         # Check cache first
         if use_cache:
