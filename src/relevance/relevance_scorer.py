@@ -349,6 +349,10 @@ class RelevanceScorer:
         Returns:
             Tuple of (node_id, is_virtual) where is_virtual indicates if we created a virtual node
         """
+        # All code entity types to consider when creating virtual edges
+        code_entity_types = ['function', 'method', 'class', 'file',
+                             'interface', 'constructor', 'field']
+
         # Strategy 1: Look for explicit issue nodes
         issue_nodes = [
             node_id for node_id, node_data in graph.nodes(data=True)
@@ -357,22 +361,40 @@ class RelevanceScorer:
         
         if issue_nodes:
             if len(issue_nodes) == 1:
-                return issue_nodes[0], False
-            
-            # If multiple issue nodes, find the best match
-            best_node = None
-            best_score = 0.0
-            
-            for node_id in issue_nodes:
-                node_data = graph.nodes[node_id]
-                node_text = self._extract_node_text(node_data)
-                similarity = self._calculate_textual_similarity(problem_description, node_text)
+                best_node = issue_nodes[0]
+            else:
+                # If multiple issue nodes, find the best match
+                best_node = None
+                best_score = 0.0
                 
-                if similarity > best_score:
-                    best_score = similarity
-                    best_node = node_id
-            
-            return best_node, False
+                for node_id in issue_nodes:
+                    node_data = graph.nodes[node_id]
+                    node_text = self._extract_node_text(node_data)
+                    similarity = self._calculate_textual_similarity(problem_description, node_text)
+                    
+                    if similarity > best_score:
+                        best_score = similarity
+                        best_node = node_id
+
+            # Validate that the issue node can reach code entities.
+            # In a directed graph, issue nodes often have zero outgoing edges
+            # (relationships point TO them, not FROM them).  If Dijkstra from
+            # the node would be empty we fall through to Strategy 3 instead.
+            undirected = graph.to_undirected(as_view=True) if graph.is_directed() else graph
+            try:
+                reachable = nx.single_source_dijkstra_path_length(
+                    undirected, best_node, cutoff=self.max_path_length,
+                )
+                reachable_code = [
+                    n for n in reachable
+                    if graph.nodes[n].get('type') in code_entity_types
+                ]
+            except Exception:
+                reachable_code = []
+
+            if reachable_code:
+                return best_node, False
+            # else: issue node is isolated — fall through to Strategy 3
         
         # Strategy 2: Look for test nodes that might be related to the problem
         test_nodes = [
@@ -397,7 +419,7 @@ class RelevanceScorer:
             if best_test_score > 0.3:  # Threshold for reasonable similarity
                 return best_test_node, False
         
-        # Strategy 3: Create a virtual root node connected to all entities
+        # Strategy 3: Create a virtual root node connected to all code entities
         virtual_node_id = "virtual_problem_root"
         
         # Add virtual node to graph temporarily
@@ -408,7 +430,7 @@ class RelevanceScorer:
         # Connect virtual node to all code entities with weight 1
         code_entities = [
             node_id for node_id, node_data in graph.nodes(data=True)
-            if node_data.get('type') in ['function', 'method', 'class', 'file']
+            if node_data.get('type') in code_entity_types
         ]
         
         for entity_id in code_entities:
@@ -453,7 +475,8 @@ class RelevanceScorer:
             List of candidate entity dictionaries
         """
         if entity_types is None:
-            entity_types = ['function', 'method', 'class', 'test', 'test_method']  # Include all code entities
+            entity_types = ['function', 'method', 'class', 'test', 'test_method',
+                            'interface', 'constructor']  # Include Java entity types
         
         candidates = []
         

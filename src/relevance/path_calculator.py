@@ -57,9 +57,9 @@ class PathCalculator:
             return 0.0
         
         try:
-            # Use NetworkX's built-in Dijkstra implementation with custom weights
+            traversal_graph = graph.to_undirected(as_view=True) if graph.is_directed() else graph
             path_length = nx.shortest_path_length(
-                graph, 
+                traversal_graph, 
                 source=source_node, 
                 target=target_node, 
                 weight=self._get_edge_weight
@@ -94,17 +94,16 @@ class PathCalculator:
             return ([source_node], 0.0)
         
         try:
-            # Get shortest path
+            traversal_graph = graph.to_undirected(as_view=True) if graph.is_directed() else graph
             path = nx.shortest_path(
-                graph, 
+                traversal_graph, 
                 source=source_node, 
                 target=target_node, 
                 weight=self._get_edge_weight
             )
             
-            # Calculate path length
             path_length = nx.shortest_path_length(
-                graph, 
+                traversal_graph, 
                 source=source_node, 
                 target=target_node, 
                 weight=self._get_edge_weight
@@ -137,9 +136,14 @@ class PathCalculator:
             return {}
         
         try:
-            # Use NetworkX's single-source shortest path lengths
+            # Use undirected view so Dijkstra can traverse edges in both
+            # directions. Knowledge graph edges are directional (e.g.
+            # BELONGS_TO: method->class) but for relevance scoring we need
+            # bidirectional reachability.
+            traversal_graph = graph.to_undirected(as_view=True) if graph.is_directed() else graph
+
             path_lengths = nx.single_source_dijkstra_path_length(
-                graph, 
+                traversal_graph, 
                 source=source_node, 
                 weight=self._get_edge_weight,
                 cutoff=max_distance
@@ -175,13 +179,14 @@ class PathCalculator:
             return [([source_node], 0.0)]
         
         try:
+            traversal_graph = graph.to_undirected(as_view=True) if graph.is_directed() else graph
             # Use NetworkX's shortest_simple_paths (Yen's algorithm)
             # Returns paths in order of increasing total weight
             paths = []
-            for path in nx.shortest_simple_paths(graph, source_node, target_node,
+            for path in nx.shortest_simple_paths(traversal_graph, source_node, target_node,
                                                   weight=lambda u, v, d: self._get_edge_weight(u, v, d)):
                 path_weight = sum(
-                    self._get_edge_weight(path[i], path[i+1], graph.edges[path[i], path[i+1]])
+                    self._get_edge_weight(path[i], path[i+1], traversal_graph.edges[path[i], path[i+1]])
                     for i in range(len(path) - 1)
                 )
                 paths.append((path, path_weight))
@@ -206,8 +211,18 @@ class PathCalculator:
         Returns:
             Edge weight
         """
-        relationship_type = edge_data.get('type', 'default')
-        return self.edge_weights.get(relationship_type, self.edge_weights['default'])
+        # Check both 'type' (virtual edges) and 'types' (real edges stored as set)
+        rel_type = edge_data.get('type')
+        if rel_type is None:
+            types_set = edge_data.get('types', set())
+            if types_set:
+                # Pick the lowest-weight relationship type from the set
+                return min(
+                    self.edge_weights.get(t, self.edge_weights['default'])
+                    for t in types_set
+                )
+            rel_type = 'default'
+        return self.edge_weights.get(rel_type, self.edge_weights['default'])
     
     def get_path_info(self, 
                      graph: nx.Graph, 

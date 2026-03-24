@@ -4,6 +4,7 @@ Processes parsed code to extract and normalize entities
 """
 
 import logging
+import os
 from typing import Dict, List, Set, Optional
 from pathlib import Path
 import re
@@ -246,7 +247,8 @@ class EntityExtractor:
             
             # Create relationships to modified files
             for file_path in commit.get('files_changed', []):
-                if file_path.endswith('.py'):
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in ('.py', '.java', '.kt', '.js', '.ts', '.c', '.cpp', '.go', '.rs'):
                     file_id = self._generate_file_id(file_path)
                     rel = Relationship(
                         source_id=commit_entity.id,
