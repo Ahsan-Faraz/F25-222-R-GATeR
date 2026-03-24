@@ -830,9 +830,11 @@ class GATREngine:
                     
                     # Get graph paths
                     for source, target, data in list(graph.edges(data=True))[:50]:
+                        edge_types = data.get('types', set())
+                        rel_type = next(iter(edge_types)) if edge_types else data.get('type', 'RELATES')
                         raw_context['graph_paths'].append({
                             'nodes': [source, target],
-                            'relationship_types': [data.get('type', 'RELATES')],
+                            'relationship_types': [rel_type],
                             'source': source,
                             'target': target
                         })
@@ -1312,13 +1314,17 @@ class GATREngine:
                     })
             
             # Hop 2: Find connected entities (dependencies, callers, etc.)
+            # Use both successors AND predecessors since graph is DiGraph
             first_hop_ids = [e['entity_id'] for e in entities[:20]]
             for node_id in first_hop_ids:
-                for neighbor in graph.neighbors(node_id):
+                all_neighbors = set(graph.successors(node_id)) | set(graph.predecessors(node_id))
+                for neighbor in all_neighbors:
                     if neighbor not in visited:
                         visited.add(neighbor)
                         node_data = graph.nodes[neighbor]
-                        edge_data = graph.get_edge_data(node_id, neighbor, default={})
+                        edge_data = graph.get_edge_data(node_id, neighbor) or graph.get_edge_data(neighbor, node_id) or {}
+                        edge_types = edge_data.get('types', set())
+                        rel_type = next(iter(edge_types)) if edge_types else edge_data.get('type', 'connected')
                         entities.append({
                             'entity_id': neighbor,
                             'entity_name': node_data.get('name', neighbor),
@@ -1327,7 +1333,7 @@ class GATREngine:
                             'code_snippet': node_data.get('code', node_data.get('code_snippet', '')),
                             'relevance': 0.5,
                             'hop': 2,
-                            'relationship': edge_data.get('type', 'connected')
+                            'relationship': rel_type
                         })
             
             # Sort by relevance
@@ -1426,8 +1432,8 @@ class GATREngine:
             # Combined score: weighted average
             combined = (0.6 * graph_norm) + (0.4 * semantic_norm)
             
-            # Bonus for methods/functions (more likely to be the fix)
-            if e.get('entity_type') in ('function', 'method'):
+            # Bonus for methods/functions/classes (more likely to be the fix)
+            if e.get('entity_type') in ('function', 'method', 'class', 'interface', 'constructor'):
                 combined += 0.2
             
             # Bonus if name contains class name from error
@@ -1454,10 +1460,12 @@ class GATREngine:
                         # Get direct edges
                         for u, v, data in graph.edges(data=True):
                             if u == target or v == target:
+                                edge_types = data.get('types', set())
+                                rel_type = next(iter(edge_types)) if edge_types else data.get('type', 'RELATES')
                                 paths.append({
                                     'source': u,
                                     'target': v,
-                                    'relationship': data.get('type', 'RELATES')
+                                    'relationship': rel_type
                                 })
         except Exception as e:
             self.logger.debug(f"Path finding error: {e}")

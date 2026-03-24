@@ -475,7 +475,7 @@ class ContextCompressor:
         
         # Look for potential API changes in method signatures
         for entity in entities:
-            if entity.entity_type in ('function', 'method'):
+            if entity.entity_type in ('function', 'method', 'class', 'interface', 'constructor'):
                 # Extract signature info
                 delta = {
                     'entity_id': entity.entity_id,

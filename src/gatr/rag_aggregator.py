@@ -154,7 +154,7 @@ class RAGAggregator:
             type_groups[entity.entity_type].append(entity)
         
         for entity_type, type_entities in type_groups.items():
-            if entity_type in ('function', 'method') and len(type_entities) > 1:
+            if entity_type in ('function', 'method', 'class', 'interface', 'constructor') and len(type_entities) > 1:
                 cluster = EntityCluster(
                     cluster_id=f"cluster_{cluster_id}",
                     cluster_type='method',
