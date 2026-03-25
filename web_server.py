@@ -1394,6 +1394,7 @@ def gatr_repair_test():
         test_code = data.get('test_code', '').strip()
         error_message = data.get('error_message', '').strip()
         project_name = data.get('project_name', '').strip() or 'default_project'
+        include_debug_trace = bool(data.get('include_debug_trace', True))
         
         if not test_name:
             return jsonify({'error': 'test_name is required'}), 400
@@ -1432,9 +1433,16 @@ def gatr_repair_test():
             'success': repair_result.success,
             'repaired_code': repair_result.repaired_code,
             'repair_strategy': repair_result.repair_strategy,
+            'llm_used': bool((repair_result.context_summary or {}).get('repair_method', '').startswith('graphrag_llm')),
+            'repair_method': (repair_result.context_summary or {}).get('repair_method', ''),
             'confidence': repair_result.confidence,
             'processing_time': repair_result.processing_time,
             'context_summary': repair_result.context_summary,
+            'raw_context_details': repair_result.raw_context_details,
+            'compressed_context_details': repair_result.compressed_context_details,
+            'aggregated_context_details': repair_result.aggregated_context_details,
+            'retrieval_trace': repair_result.retrieval_trace if include_debug_trace else {},
+            'final_rag_prompt': repair_result.final_rag_prompt if include_debug_trace else {},
             'error_message': repair_result.error_message,
             'diff_file_path': repair_result.diff_file_path,
             'diff_content': repair_result.diff_content,
@@ -1450,6 +1458,8 @@ def gatr_repair_test():
                 'project_name': project_name,
                 'repaired_code': repair_result.repaired_code,
                 'repair_strategy': repair_result.repair_strategy,
+                'llm_used': bool((repair_result.context_summary or {}).get('repair_method', '').startswith('graphrag_llm')),
+                'repair_method': (repair_result.context_summary or {}).get('repair_method', ''),
                 'confidence': repair_result.confidence,
                 'processing_time': repair_result.processing_time,
                 'context_summary': repair_result.context_summary,
@@ -1457,6 +1467,8 @@ def gatr_repair_test():
                 'raw_context_details': repair_result.raw_context_details,
                 'compressed_context_details': repair_result.compressed_context_details,
                 'aggregated_context_details': repair_result.aggregated_context_details,
+                'retrieval_trace': repair_result.retrieval_trace if include_debug_trace else {},
+                'final_rag_prompt': repair_result.final_rag_prompt if include_debug_trace else {},
                 'diff_file_path': repair_result.diff_file_path,
                 'diff_content': repair_result.diff_content
             }

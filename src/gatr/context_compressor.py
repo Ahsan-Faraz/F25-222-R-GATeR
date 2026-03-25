@@ -49,16 +49,43 @@ class ContextCompressor:
     """
     
     # KGCompass weight for hybrid scoring
-    KG_WEIGHT = 0.7
-    SEMANTIC_WEIGHT = 0.3
+    KG_WEIGHT = 0.4
+    SEMANTIC_WEIGHT = 0.6
     
     # Filtering thresholds
     MIN_COMBINED_SCORE = 0.15
     MAX_SNIPPET_LINES = 15
+    MIN_SNIPPET_LINES = 5
+    TARGET_SNIPPET_LINES = 10
     MAX_PATH_HOPS = 3
+
+    SNIPPET_PRIORITY_TOKENS = [
+        'get(',
+        'select(',
+        'assert',
+        'equals',
+        'size(',
+        'length',
+        'first(',
+        'last(',
+        'return',
+        'if',
+    ]
     
     # Valid relationship types for filtering
     VALID_RELATIONSHIPS = {'TESTS', 'CALLS', 'IMPORTS', 'MENTIONS', 'MODIFIES', 'BELONGS_TO'}
+
+    ENTITY_TYPE_PRIORITY = {
+        'method': 6,
+        'function': 6,
+        'constructor': 5,
+        'test': 5,
+        'test_method': 5,
+        'class': 4,
+        'interface': 4,
+        'field': 3,
+        'file': 1,
+    }
     
     def __init__(self):
         self.logger = logging.getLogger('gatr.context_compressor')
@@ -97,7 +124,12 @@ class ContextCompressor:
         filtered_entities = self._step_entity_filtering(scored_entities, graph_paths)
         
         # Step 2.3: Snippet Compression
-        compressed_snippets = self._step_snippet_compression(filtered_entities, raw_snippets)
+        compressed_snippets = self._step_snippet_compression(
+            filtered_entities,
+            raw_snippets,
+            broken_test,
+            error_message,
+        )
         
         # Step 2.4: Test Pattern Compression
         compressed_patterns = self._step_test_pattern_compression(usage_examples, conventions)
@@ -209,9 +241,15 @@ class ContextCompressor:
             entity_type = entity.get('entity_type', entity.get('type', '')).lower()
             entity_name = entity.get('entity_name', entity.get('name', ''))
             combined_score = entity.get('combined_score', 0)
+            semantic_similarity = entity.get('semantic_similarity', 0)
+            kg_score = entity.get('kg_compass_score', 0)
             
             # Filter: Score threshold
             if combined_score < self.MIN_COMBINED_SCORE:
+                continue
+
+            # Filter: graph-only weak hits (very common noise source)
+            if semantic_similarity <= 0 and kg_score < 0.25 and combined_score < 0.35:
                 continue
             
             # Filter: Duplicates
@@ -221,6 +259,14 @@ class ContextCompressor:
             
             # Filter: Documentation-only nodes
             if entity_type in ('docstring', 'comment', 'documentation'):
+                continue
+
+            # Filter: non-actionable infrastructure nodes for repair prompting
+            if entity_type in ('repository', 'issue', 'pull_request', 'commit', 'import', 'package'):
+                continue
+
+            # Filter: generic exception/error classes unless strongly semantically matched
+            if re.search(r'(Exception|Error)$', entity_name) and semantic_similarity <= 0 and kg_score < 0.5:
                 continue
             
             # Filter: Dead code (entities with no connections - relaxed for top entities)
@@ -243,13 +289,24 @@ class ContextCompressor:
                 line_end=entity.get('line_end', 0)
             )
             filtered.append(compressed)
+
+        filtered.sort(
+            key=lambda e: (
+                self.ENTITY_TYPE_PRIORITY.get(e.entity_type, 0),
+                e.combined_score,
+                e.semantic_similarity,
+            ),
+            reverse=True,
+        )
         
         self.logger.debug(f"Filtered to {len(filtered)} entities")
         return filtered
     
-    def _step_snippet_compression(self, 
-                                   entities: List[CompressedEntity], 
-                                   raw_snippets: List[Dict]) -> List[Dict]:
+    def _step_snippet_compression(self,
+                                   entities: List[CompressedEntity],
+                                   raw_snippets: List[Dict],
+                                   broken_test: Optional[Dict] = None,
+                                   error_message: str = '') -> List[Dict]:
         """
         Step 2.3: Snippet Compression
         Keep only lines related to signatures, logic, object creation
@@ -262,18 +319,46 @@ class ContextCompressor:
         for snippet in raw_snippets:
             entity_id = snippet.get('entity_id', snippet.get('id', ''))
             if entity_id:
-                snippet_lookup[entity_id] = snippet.get('code', snippet.get('code_snippet', ''))
+                code = snippet.get('code', snippet.get('code_snippet', ''))
+                snippet_lookup[entity_id] = code
+                snippet_lookup[str(entity_id)] = code
         
         compressed_snippets = []
+
+        # Always inject a focused test-context snippet for robust repair reasoning.
+        focused_test_snippet = self._build_focused_test_snippet(broken_test or {}, error_message)
+        if focused_test_snippet:
+            compressed_snippets.append({
+                'entity_id': 'focused::broken_test',
+                'entity_name': (broken_test or {}).get('test_name', 'focused_test_context'),
+                'entity_type': 'test_method',
+                'file_path': (broken_test or {}).get('test_file', ''),
+                'code': focused_test_snippet,
+                'score': 1.0,
+            })
         
-        for entity in entities:
-            code = snippet_lookup.get(entity.entity_id, '')
+        prioritized_entities = sorted(
+            entities,
+            key=lambda e: (
+                self.ENTITY_TYPE_PRIORITY.get(e.entity_type, 0),
+                e.combined_score,
+                e.semantic_similarity,
+            ),
+            reverse=True,
+        )
+
+        missing_snippet_count = 0
+        for entity in prioritized_entities:
+            code = snippet_lookup.get(entity.entity_id, '') or snippet_lookup.get(str(entity.entity_id), '')
             
             if not code:
+                missing_snippet_count += 1
                 continue
             
             # Compress the snippet
             compressed_code = self._compress_code_snippet(code)
+            if not compressed_code:
+                continue
             entity.compressed_snippet = compressed_code
             
             compressed_snippets.append({
@@ -284,8 +369,154 @@ class ContextCompressor:
                 'code': compressed_code,
                 'score': entity.combined_score
             })
+
+        fallback_used = False
+        if len(compressed_snippets) < self.MIN_SNIPPET_LINES:
+            # Requirement: if filtered snippets are too few, include full test method body.
+            fallback_blocks = self._build_full_test_method_blocks(broken_test or {})
+            if fallback_blocks:
+                fallback_used = True
+                for i, block in enumerate(fallback_blocks, 1):
+                    compressed_snippets.append({
+                        'entity_id': f'fallback::broken_test::{i}',
+                        'entity_name': (broken_test or {}).get('test_name', 'broken_test_context'),
+                        'entity_type': 'test_method',
+                        'file_path': (broken_test or {}).get('test_file', ''),
+                        'code': block,
+                        'score': 0.95,
+                    })
+                    if len(compressed_snippets) >= self.MIN_SNIPPET_LINES:
+                        break
+
+        self.logger.info(
+            "Snippet compression: input_entities=%d raw_snippets=%d retained=%d missing_for_entities=%d fallback_used=%s",
+            len(prioritized_entities),
+            len(raw_snippets),
+            len(compressed_snippets),
+            missing_snippet_count,
+            fallback_used,
+        )
         
         return compressed_snippets
+
+    def _clean_code_lines(self, code: str) -> List[str]:
+        """Return non-empty, non-comment-only lines."""
+        if not code:
+            return []
+
+        out = []
+        for line in code.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith('#') or stripped.startswith('//'):
+                continue
+            if stripped.startswith('/*') or stripped.startswith('*') or stripped.startswith('*/'):
+                continue
+            out.append(line)
+        return out
+
+    def _build_focused_test_snippet(self, broken_test: Dict, error_message: str) -> str:
+        """Build focused snippet containing failing/selector/assertion lines with +/-2 context."""
+        test_code = (broken_test or {}).get('test_code', '')
+        if not test_code:
+            return ''
+
+        raw_lines = test_code.split('\n')
+        if not raw_lines:
+            return ''
+
+        lowered_error = (error_message or '').lower()
+        broken_lines = [
+            (line or '').strip()
+            for line in (broken_test or {}).get('broken_lines', [])
+            if (line or '').strip()
+        ]
+
+        target_indices = set()
+
+        # 1) Failing line candidates from provided broken lines.
+        for idx, line in enumerate(raw_lines):
+            stripped = line.strip()
+            if stripped and any(bl == stripped for bl in broken_lines):
+                target_indices.add(idx)
+
+        # 2) Index-out-of-bounds specific failing line heuristic.
+        if 'indexoutofboundsexception' in lowered_error or 'out of bounds' in lowered_error:
+            m = re.search(r'index\s+(\d+)\s+out\s+of\s+bounds', lowered_error)
+            idx_val = m.group(1) if m else ''
+            for i, line in enumerate(raw_lines):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if idx_val and (f'get({idx_val})' in stripped or re.search(rf'\[\s*{re.escape(idx_val)}\s*\]', stripped)):
+                    target_indices.add(i)
+                    break
+
+        # 3) Selector line and assertion line.
+        selector_pattern = re.compile(r'\.select\(|\.get\(|\.first\(|\.last\(|\.size\(|\.length\(', re.IGNORECASE)
+        assertion_pattern = re.compile(r'\bassert|equals', re.IGNORECASE)
+        for i, line in enumerate(raw_lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if selector_pattern.search(stripped):
+                target_indices.add(i)
+            if assertion_pattern.search(stripped):
+                target_indices.add(i)
+
+        # 4) Expand with surrounding context +/- 2 lines.
+        expanded_indices = set()
+        for i in target_indices:
+            for j in range(max(0, i - 2), min(len(raw_lines), i + 3)):
+                expanded_indices.add(j)
+
+        selected = [raw_lines[i] for i in sorted(expanded_indices)]
+        cleaned = self._clean_code_lines('\n'.join(selected))
+
+        # Ensure 5-10 lines minimum using prioritized then remaining lines from method body.
+        if len(cleaned) < self.MIN_SNIPPET_LINES:
+            body_cleaned = self._clean_code_lines(test_code)
+            existing = set(cleaned)
+            for line in body_cleaned:
+                if line in existing:
+                    continue
+                cleaned.append(line)
+                existing.add(line)
+                if len(cleaned) >= self.MIN_SNIPPET_LINES:
+                    break
+
+        # Priority ordering first
+        prioritized = []
+        non_prioritized = []
+        for line in cleaned:
+            l = line.strip().lower()
+            if any(tok in l for tok in self.SNIPPET_PRIORITY_TOKENS):
+                prioritized.append(line)
+            else:
+                non_prioritized.append(line)
+
+        final_lines = (prioritized + non_prioritized)[:max(self.MIN_SNIPPET_LINES, self.TARGET_SNIPPET_LINES)]
+        return '\n'.join(final_lines)
+
+    def _build_full_test_method_blocks(self, broken_test: Dict) -> List[str]:
+        """Build fallback full method blocks (5-10 lines each) from broken test body."""
+        test_code = (broken_test or {}).get('test_code', '')
+        cleaned_lines = self._clean_code_lines(test_code)
+        if not cleaned_lines:
+            return []
+
+        block_size = max(self.MIN_SNIPPET_LINES, self.TARGET_SNIPPET_LINES)
+        blocks = []
+        for i in range(0, len(cleaned_lines), block_size):
+            block = cleaned_lines[i:i + block_size]
+            if len(block) < self.MIN_SNIPPET_LINES and blocks:
+                # Merge short tail into previous block.
+                blocks[-1] = blocks[-1] + '\n' + '\n'.join(block)
+            else:
+                blocks.append('\n'.join(block))
+
+        return blocks
     
     def _compress_code_snippet(self, code: str) -> str:
         """Compress a code snippet to essential lines"""
@@ -294,6 +525,13 @@ class ContextCompressor:
         
         lines = code.split('\n')
         compressed_lines = []
+        priority_lines = []
+        low_priority_lines = []
+
+        priority_pattern = re.compile(
+            r'(assert|expect|verify|\.get\(|\.select\(|\.size\(|\.length\(|\.contains\(|\.equals\(|\.first\(|\.last\(|\bnew\b|\breturn\b|\bif\b|\bfor\b|\bwhile\b)',
+            re.IGNORECASE,
+        )
         
         for line in lines:
             stripped = line.strip()
@@ -309,14 +547,61 @@ class ContextCompressor:
             # Skip docstrings (simplified detection)
             if stripped.startswith('"""') or stripped.startswith("'''"):
                 continue
-            
-            compressed_lines.append(line)
-            
-            # Limit to max lines
-            if len(compressed_lines) >= self.MAX_SNIPPET_LINES:
-                break
+
+            if priority_pattern.search(stripped):
+                priority_lines.append(line)
+            else:
+                low_priority_lines.append(line)
+
+        compressed_lines.extend(priority_lines)
+        compressed_lines.extend(low_priority_lines)
+        compressed_lines = compressed_lines[:self.MAX_SNIPPET_LINES]
+
+        # Ensure we keep a minimum context window for repair even when matches are sparse.
+        if len(compressed_lines) < self.MIN_SNIPPET_LINES:
+            existing = set(compressed_lines)
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith('#') or stripped.startswith('//'):
+                    continue
+                if line in existing:
+                    continue
+                compressed_lines.append(line)
+                if len(compressed_lines) >= self.MIN_SNIPPET_LINES:
+                    break
+
+        compressed_lines = compressed_lines[:max(self.TARGET_SNIPPET_LINES, self.MIN_SNIPPET_LINES)]
         
         return '\n'.join(compressed_lines)
+
+    def _build_fallback_test_snippet(self, broken_test: Dict) -> str:
+        """Construct non-empty fallback snippet from the broken test when retrieval snippets are missing."""
+        test_code = (broken_test or {}).get('test_code', '')
+        if not test_code:
+            return ''
+
+        lines = test_code.split('\n')
+        prioritized = []
+        others = []
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            lower = stripped.lower()
+            if any(tok in lower for tok in self.SNIPPET_PRIORITY_TOKENS):
+                prioritized.append(line)
+            else:
+                others.append(line)
+
+        selected = prioritized + others
+        if not selected:
+            return ''
+
+        selected = selected[:max(self.TARGET_SNIPPET_LINES, self.MIN_SNIPPET_LINES)]
+        return '\n'.join(selected)
     
     def _step_test_pattern_compression(self, 
                                         usage_examples: List[Dict], 

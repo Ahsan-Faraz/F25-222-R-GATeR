@@ -32,7 +32,8 @@ LM_STUDIO_MODEL = os.getenv(
 )
 LM_STUDIO_API_KEY = os.getenv('LM_STUDIO_API_KEY', 'lm-studio')
 LM_STUDIO_REQUEST_TIMEOUT_S = int(os.getenv('LM_STUDIO_REQUEST_TIMEOUT_S', '0'))
-GATR_DISABLE_FALLBACK = os.getenv('GATR_DISABLE_FALLBACK', 'false').lower() in {'1', 'true', 'yes', 'on'}
+# Strict mode default: disable all deterministic/rule-based fallbacks so outputs are purely LLM+RAG.
+GATR_DISABLE_FALLBACK = os.getenv('GATR_DISABLE_FALLBACK', 'true').lower() in {'1', 'true', 'yes', 'on'}
 
 # Workspace fix directory
 WORKSPACE_FIX_DIR = os.getenv('WORKSPACE_FIX_DIR', 'workspace/fix')
@@ -96,6 +97,8 @@ class TestRepairResult:
     raw_context_details: Optional[Dict] = None
     compressed_context_details: Optional[Dict] = None
     aggregated_context_details: Optional[Dict] = None
+    retrieval_trace: Optional[Dict] = None
+    final_rag_prompt: Optional[Dict] = None
     diff_file_path: Optional[str] = None  # Path to the generated diff/patch file
     diff_content: Optional[str] = None    # The actual unified diff content
 
@@ -217,6 +220,278 @@ class GATREngine:
                 self.logger.info(f"✅ Relevance scorer initialized")
             except Exception as e:
                 self.logger.warning(f"WARNING: Could not init relevance scorer: {e}")
+
+    def _normalize_vector_hits(self, search_result: Any) -> List[Dict[str, Any]]:
+        """
+        Normalize vector search outputs across backends.
+
+        Step6VectorStorage returns {success, results:[...]}
+        Some legacy paths expect {similar_entities:[...]} or plain list.
+        """
+        if search_result is None:
+            return []
+
+        if isinstance(search_result, list):
+            raw_hits = search_result
+        elif isinstance(search_result, dict):
+            raw_hits = search_result.get('results')
+            if raw_hits is None:
+                raw_hits = search_result.get('similar_entities')
+            if raw_hits is None:
+                raw_hits = []
+        else:
+            return []
+
+        normalized = []
+        for hit in raw_hits:
+            if not isinstance(hit, dict):
+                continue
+
+            entity_id = hit.get('entity_id', hit.get('id', ''))
+            entity_name = hit.get('entity_name', hit.get('name', ''))
+            entity_type = hit.get('entity_type', hit.get('type', 'unknown'))
+            file_path = hit.get('file_path', '')
+            code_snippet = hit.get('code_snippet', hit.get('content', hit.get('text', '')))
+
+            relevance_score = hit.get('relevance_score', hit.get('score', 0.0))
+            semantic_similarity = hit.get('semantic_similarity', hit.get('similarity_score', relevance_score))
+
+            try:
+                relevance_score = float(relevance_score)
+            except Exception:
+                relevance_score = 0.0
+            try:
+                semantic_similarity = float(semantic_similarity)
+            except Exception:
+                semantic_similarity = 0.0
+
+            normalized.append({
+                'entity_id': entity_id,
+                'entity_name': entity_name,
+                'entity_type': entity_type,
+                'file_path': file_path,
+                'code_snippet': code_snippet,
+                'relevance_score': relevance_score,
+                'semantic_similarity': semantic_similarity,
+            })
+
+        return normalized
+
+    def _entity_keyword_overlap(self, entity_name: str, error_info: Dict) -> float:
+        """Compute lightweight keyword overlap between entity name and parsed error context."""
+        if not entity_name:
+            return 0.0
+
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", entity_name)
+        if not tokens:
+            return 0.0
+
+        query_terms = []
+        if error_info.get('class_name'):
+            query_terms.append(error_info['class_name'])
+        if error_info.get('wrong_method'):
+            query_terms.append(error_info['wrong_method'])
+        query_terms.extend(error_info.get('keywords', [])[:8])
+
+        if not query_terms:
+            return 0.0
+
+        entity_text = " ".join(tokens).lower()
+        hits = sum(1 for term in query_terms if term and term.lower() in entity_text)
+        return hits / max(len(query_terms), 1)
+
+    def _is_noise_entity(self, entity_name: str, entity_type: str, error_info: Dict) -> bool:
+        """Heuristic filter for commonly irrelevant entities in repair retrieval."""
+        et = (entity_type or '').lower()
+        name = entity_name or ''
+        lower_name = name.lower().strip()
+
+        if et in {'repository', 'issue', 'pull_request', 'commit', 'import', 'package'}:
+            return True
+
+        # Known low-signal entities that often pollute prompt context.
+        if lower_name in {'timeout', 'outputhtml', 'outputxml'}:
+            return True
+
+        if any(tok in lower_name for tok in ['timeout', 'outputhtml', 'outputxml']):
+            overlap = self._entity_keyword_overlap(name, error_info)
+            if overlap < 0.25:
+                return True
+
+        # Frequent noisy exception classes unless directly tied to query terms.
+        if re.search(r"(Exception|Error)$", name):
+            overlap = self._entity_keyword_overlap(name, error_info)
+            if overlap < 0.2:
+                return True
+
+        # Empty / synthetic names are usually not useful for prompt context.
+        if not name.strip() or name.strip().lower() in {'unknown', 'none'}:
+            return True
+
+        return False
+
+    def _is_prompt_relevant_entity(self, entity: Dict, error_info: Dict) -> bool:
+        """Prompt-stage relevance gate to remove graph noise before final prompt assembly."""
+        name = entity.get('name', entity.get('entity_name', ''))
+        etype = entity.get('type', entity.get('entity_type', 'unknown'))
+
+        if self._is_noise_entity(name, etype, error_info):
+            return False
+
+        allowed_types = {
+            'method', 'function', 'class', 'interface', 'constructor',
+            'test', 'test_method', 'field'
+        }
+        etype_l = (etype or '').lower()
+
+        semantic_score = entity.get('semantic_score', entity.get('semantic_similarity', 0))
+        kg_score = entity.get('kgcompass_score', entity.get('kg_compass_score', entity.get('score', 0)))
+        try:
+            semantic_score = float(semantic_score)
+        except Exception:
+            semantic_score = 0.0
+        try:
+            kg_score = float(kg_score)
+        except Exception:
+            kg_score = 0.0
+
+        keyword_overlap = self._entity_keyword_overlap(name, error_info)
+
+        if semantic_score <= 0 and kg_score < 0.25 and keyword_overlap < 0.2:
+            return False
+
+        if etype_l not in allowed_types and keyword_overlap < 0.35:
+            return False
+
+        return True
+
+    def _extract_failing_line_context(self, test_code: str, error_message: str,
+                                      error_info: Dict, broken_test: Dict) -> Tuple[List[str], List[int]]:
+        """Extract failing lines robustly so the buggy line is always included in prompt context."""
+        code_lines = test_code.split('\n') if test_code else []
+        chosen_numbers = []
+        chosen_lines = []
+
+        # 1) Use explicit data if provided by caller.
+        for ln in broken_test.get('broken_line_numbers', []) or []:
+            try:
+                ln = int(ln)
+            except Exception:
+                continue
+            if 1 <= ln <= len(code_lines):
+                chosen_numbers.append(ln)
+                chosen_lines.append(code_lines[ln - 1])
+
+        for line in broken_test.get('broken_lines', []) or []:
+            text = (line or '').strip()
+            if not text:
+                continue
+            for idx, code_line in enumerate(code_lines, 1):
+                if text == code_line.strip() and idx not in chosen_numbers:
+                    chosen_numbers.append(idx)
+                    chosen_lines.append(code_line)
+                    break
+
+        # 2) Parse stack trace line number if available.
+        if not chosen_numbers:
+            line_match = re.search(r'line\s+(\d+)', error_message, re.IGNORECASE)
+            if line_match:
+                ln = int(line_match.group(1))
+                if 1 <= ln <= len(code_lines):
+                    chosen_numbers.append(ln)
+                    chosen_lines.append(code_lines[ln - 1])
+
+        # 3) IndexOutOfBounds heuristic: locate index access in test line.
+        if not chosen_numbers and re.search(r'IndexOutOfBoundsException|out of bounds', error_message, re.IGNORECASE):
+            idx_match = re.search(r'Index\s+(\d+)\s+out\s+of\s+bounds', error_message, re.IGNORECASE)
+            idx_val = idx_match.group(1) if idx_match else ''
+
+            # Pass 1: Exact index access patterns (highest confidence).
+            exact_patterns = []
+            if idx_val:
+                exact_patterns = [
+                    rf'\.get\(\s*{re.escape(idx_val)}\s*\)',
+                    rf'\[\s*{re.escape(idx_val)}\s*\]',
+                ]
+
+            for i, line in enumerate(code_lines, 1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if exact_patterns and any(re.search(p, stripped) for p in exact_patterns):
+                    chosen_numbers.append(i)
+                    chosen_lines.append(line)
+                    break
+
+            # Pass 2: Generic collection access if exact index wasn't found.
+            if not chosen_numbers:
+                generic_patterns = [r'\.get\(', r'\[\s*\d+\s*\]', r'\.select\(']
+                for i, line in enumerate(code_lines, 1):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if any(re.search(p, stripped) for p in generic_patterns):
+                        chosen_numbers.append(i)
+                        chosen_lines.append(line)
+                        break
+
+        # 4) Method-name heuristic.
+        wrong_method = error_info.get('wrong_method', '')
+        if not chosen_numbers and wrong_method:
+            for i, line in enumerate(code_lines, 1):
+                if wrong_method in line:
+                    chosen_numbers.append(i)
+                    chosen_lines.append(line)
+                    break
+
+        # 5) Final fallback: first actionable line from test body.
+        if not chosen_numbers:
+            for i, line in enumerate(code_lines, 1):
+                stripped = line.strip().lower()
+                if any(tok in stripped for tok in ['get(', 'select(', 'assert', 'equals', 'size(', 'length', 'first(', 'last(']):
+                    chosen_numbers.append(i)
+                    chosen_lines.append(line)
+                    break
+
+        # Deduplicate while preserving order.
+        dedup_numbers = []
+        dedup_lines = []
+        for ln, line in zip(chosen_numbers, chosen_lines):
+            if ln in dedup_numbers:
+                continue
+            dedup_numbers.append(ln)
+            dedup_lines.append(line)
+
+        return dedup_lines[:3], dedup_numbers[:3]
+
+    def _extract_local_snippet(self, file_path: str, line_start: int = 0, line_end: int = 0, max_lines: int = 40) -> str:
+        """Best-effort local snippet extraction when graph/vector metadata lacks code_snippet."""
+        if not file_path:
+            return ''
+
+        try:
+            path = Path(file_path)
+            if not path.exists():
+                # Try resolving relative paths from workspace root.
+                path = (Path.cwd() / file_path).resolve()
+                if not path.exists():
+                    return ''
+
+            lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
+            if not lines:
+                return ''
+
+            if line_start and line_end and line_start > 0 and line_end >= line_start:
+                start = max(1, line_start)
+                end = min(len(lines), line_end)
+                if end >= start:
+                    snippet = lines[start - 1:end]
+                    return '\n'.join(snippet[:max_lines]).strip()
+
+            # Fallback to head chunk if no valid line window.
+            return '\n'.join(lines[:max_lines]).strip()
+        except Exception:
+            return ''
     
     def get_database_status(self) -> Dict:
         """
@@ -485,8 +760,10 @@ class GATREngine:
             # ============ Step 4: Generate Repair ============
             pipeline = self._update_step(pipeline, 3, 'running')
             step_start = time.time()
+
+            compressed_context_payload = self._serialize_compressed_context(compressed_context)
             
-            repaired_code, repair_method = self._generate_repair(
+            repaired_code, repair_method, generation_debug = self._generate_repair(
                 broken_test,
                 error_message,
                 compressed_context,
@@ -494,25 +771,10 @@ class GATREngine:
             )
 
             original_code = broken_test.get('test_code', '') if isinstance(broken_test, dict) else str(broken_test)
-            if (not self.disable_fallback) and repaired_code.strip() == original_code.strip():
+            if repaired_code.strip() == original_code.strip():
                 self.logger.warning(
-                    "Generated repair is unchanged from original; applying deterministic fallback to ensure a diff"
+                    "Generated repair is unchanged from original; no fallback is allowed (strict LLM+RAG mode)"
                 )
-                repaired_code = self._fallback_repair(broken_test, error_message, aggregated_context)
-                repair_method = f"{repair_method}_forced_fallback"
-
-            if (not self.disable_fallback) and repaired_code.strip() == original_code.strip():
-                self.logger.warning(
-                    "Fallback repair still unchanged; adding explicit fix annotation to guarantee a non-empty diff"
-                )
-                error_info = self._parse_error_message(error_message)
-                repaired_code = self._annotate_with_fix_suggestion(
-                    original_code,
-                    error_message,
-                    error_info,
-                    aggregated_context,
-                )
-                repair_method = f"{repair_method}_forced_annotation"
             
             pipeline = self._update_step(pipeline, 3, 'completed', step_start,
                                          output_summary={'code_generated': len(repaired_code) > 0, 'method': repair_method})
@@ -566,6 +828,14 @@ class GATREngine:
                 raw_context_details=raw_context_details,
                 compressed_context_details=compressed_context_details,
                 aggregated_context_details=aggregated_context_details,
+                retrieval_trace={
+                    'step_1_raw_context': raw_context,
+                    'step_2_compressed_context': compressed_context_payload,
+                    'step_3_aggregated_context': aggregated_context,
+                    'step_7_retrieved_context': generation_debug.get('retrieved_context', {}),
+                    'step_8_augmented_context': generation_debug.get('augmented_context', {})
+                },
+                final_rag_prompt=generation_debug.get('final_prompt', {}),
                 diff_content=diff_content,
                 diff_file_path=diff_file_path
             )
@@ -591,8 +861,35 @@ class GATREngine:
                 pipeline_progress=pipeline.to_dict() if pipeline else None,
                 raw_context_details=raw_context_details,
                 compressed_context_details=compressed_context_details,
-                aggregated_context_details=aggregated_context_details
+                aggregated_context_details=aggregated_context_details,
+                retrieval_trace={},
+                final_rag_prompt={}
             )
+
+    def _serialize_compressed_context(self, compressed_context: CompressedContext) -> Dict:
+        """Convert compressed context object into JSON-safe payload for API/debugging."""
+        top_entities_payload = []
+        for entity in (compressed_context.top_entities or []):
+            top_entities_payload.append({
+                'entity_id': getattr(entity, 'entity_id', ''),
+                'entity_name': getattr(entity, 'entity_name', ''),
+                'entity_type': getattr(entity, 'entity_type', ''),
+                'file_path': getattr(entity, 'file_path', ''),
+                'combined_score': getattr(entity, 'combined_score', 0),
+                'kgcompass_score': getattr(entity, 'kg_compass_score', 0),
+                'semantic_score': getattr(entity, 'semantic_score', 0),
+                'graph_score': getattr(entity, 'graph_score', 0),
+                'compressed_snippet': getattr(entity, 'compressed_snippet', ''),
+                'reasoning_path': getattr(entity, 'reasoning_path', [])
+            })
+
+        return {
+            'top_entities': top_entities_payload,
+            'compressed_snippets': compressed_context.compressed_snippets or [],
+            'compressed_patterns': compressed_context.compressed_patterns or {},
+            'compressed_paths': compressed_context.compressed_paths or [],
+            'error_summary': compressed_context.error_summary
+        }
     
     def _init_pipeline_steps(self) -> List[PipelineStep]:
         """Initialize all pipeline steps"""
@@ -790,6 +1087,7 @@ class GATREngine:
         # Extract class/module name from error (e.g., "FoodParser" from "FoodParser has no attribute 'text'")
         class_match = re.search(r"'(\w+)'\s+(?:object\s+)?has\s+no\s+attribute", error_message)
         class_name = class_match.group(1) if class_match else ""
+        error_info = self._parse_error_message(error_message)
         
         # Extract the wrong method name from error
         attr_match = re.search(r"no\s+attribute\s+'(\w+)'", error_message)
@@ -815,29 +1113,77 @@ class GATREngine:
         # Get entities from knowledge graph
         if self.kg_manager:
             try:
-                # Get entities related to the test
+                # Get entities related to the test (keyword-aware rather than first-N nodes).
                 graph = getattr(self.kg_manager, 'graph', None)
                 if graph:
-                    for node_id in list(graph.nodes())[:100]:
+                    allowed_types = {'function', 'method', 'class', 'interface', 'constructor', 'field', 'test', 'test_method'}
+                    scored_nodes = []
+                    for node_id in list(graph.nodes()):
                         node_data = graph.nodes[node_id]
+                        entity_name = node_data.get('name', node_id)
+                        entity_type = node_data.get('type', 'unknown')
+                        if entity_type not in allowed_types:
+                            continue
+                        if self._is_noise_entity(entity_name, entity_type, error_info):
+                            continue
+
+                        overlap = self._entity_keyword_overlap(entity_name, error_info)
+                        base = 0.1
+                        if entity_type in {'method', 'function', 'test', 'test_method'}:
+                            base = 0.2
+                        relevance_score = min(1.0, base + overlap)
+
+                        # Keep entities that are clearly relevant or at least typed code entities.
+                        if overlap > 0 or relevance_score >= 0.2:
+                            scored_nodes.append((relevance_score, node_id, node_data))
+
+                    scored_nodes.sort(key=lambda x: x[0], reverse=True)
+                    selected = scored_nodes[:120]
+
+                    for relevance_score, node_id, node_data in selected:
+                        node_snippet = node_data.get('code_snippet', node_data.get('code', ''))
+                        if not node_snippet:
+                            node_snippet = self._extract_local_snippet(
+                                file_path=node_data.get('file_path', ''),
+                                line_start=node_data.get('line_start', 0),
+                                line_end=node_data.get('line_end', 0),
+                            )
+
                         raw_context['entities'].append({
                             'entity_id': node_id,
                             'entity_name': node_data.get('name', node_id),
                             'entity_type': node_data.get('type', 'unknown'),
                             'file_path': node_data.get('file_path', ''),
-                            'relevance_score': 0.5
+                            'relevance_score': relevance_score,
+                            'source': 'kg_seed',
+                            'code_snippet': node_snippet,
                         })
-                    
-                    # Get graph paths
-                    for source, target, data in list(graph.edges(data=True))[:50]:
-                        edge_types = data.get('types', set())
-                        rel_type = next(iter(edge_types)) if edge_types else data.get('type', 'RELATES')
-                        raw_context['graph_paths'].append({
-                            'nodes': [source, target],
-                            'relationship_types': [rel_type],
-                            'source': source,
-                            'target': target
-                        })
+
+                        if node_snippet:
+                            raw_context['snippets'].append({
+                                'entity_id': node_id,
+                                'code': node_snippet,
+                            })
+
+                    # Build graph paths around selected entities instead of global first 50 edges.
+                    seen_edges = set()
+                    for _, node_id, _ in selected[:40]:
+                        neighbors = set(graph.successors(node_id)) | set(graph.predecessors(node_id))
+                        for nb in neighbors:
+                            edge_key = tuple(sorted([str(node_id), str(nb)]))
+                            if edge_key in seen_edges:
+                                continue
+                            seen_edges.add(edge_key)
+
+                            data = graph.get_edge_data(node_id, nb) or graph.get_edge_data(nb, node_id) or {}
+                            edge_types = data.get('types', set())
+                            rel_type = next(iter(edge_types)) if edge_types else data.get('type', 'RELATES')
+                            raw_context['graph_paths'].append({
+                                'nodes': [node_id, nb],
+                                'relationship_types': [rel_type],
+                                'source': node_id,
+                                'target': nb
+                            })
             except Exception as e:
                 self.logger.warning(f"Failed to get KG context: {e}")
         
@@ -845,19 +1191,29 @@ class GATREngine:
         if self.vector_storage:
             try:
                 search_result = self.vector_storage.search_similar_entities(query, top_k=20)
-                if search_result.get('success'):
-                    for hit in search_result.get('results', []):
-                        raw_context['semantic_hits'].append({
-                            'entity_id': hit.get('entity_id', ''),
-                            'entity_name': hit.get('entity_name', ''),
-                            'score': hit.get('relevance_score', hit.get('score', 0)),
-                            'code_snippet': hit.get('code_snippet', ''),
-                            'semantic_similarity': hit.get('semantic_similarity', 0)
-                        })
-                        raw_context['snippets'].append({
-                            'entity_id': hit.get('entity_id', ''),
-                            'code': hit.get('code_snippet', '')
-                        })
+                for hit in self._normalize_vector_hits(search_result):
+                    if self._is_noise_entity(hit.get('entity_name', ''), hit.get('entity_type', ''), error_info):
+                        continue
+                    raw_context['semantic_hits'].append({
+                        'entity_id': hit.get('entity_id', ''),
+                        'entity_name': hit.get('entity_name', ''),
+                        'score': hit.get('relevance_score', 0),
+                        'code_snippet': hit.get('code_snippet', ''),
+                        'semantic_similarity': hit.get('semantic_similarity', 0)
+                    })
+                    raw_context['snippets'].append({
+                        'entity_id': hit.get('entity_id', ''),
+                        'code': hit.get('code_snippet', '')
+                    })
+                    raw_context['entities'].append({
+                        'entity_id': hit.get('entity_id', ''),
+                        'entity_name': hit.get('entity_name', ''),
+                        'entity_type': hit.get('entity_type', 'unknown'),
+                        'file_path': hit.get('file_path', ''),
+                        'score': hit.get('relevance_score', 0.0),
+                        'semantic_similarity': hit.get('semantic_similarity', 0.0),
+                        'source': 'vector'
+                    })
             except Exception as e:
                 self.logger.warning(f"Failed to get vector context: {e}")
         
@@ -905,10 +1261,9 @@ class GATREngine:
                         elif hasattr(self.relevance_scorer, 'calculate_relevance_scores'):
                             # Step5RelevanceScoring uses calculate_relevance_scores
                             relevance_results = self.relevance_scorer.calculate_relevance_scores(
-                                error_message=error_message,
-                                kg_manager=self.kg_manager,
-                                issue_id=None,
-                                top_k=20
+                                problem_description=error_message,
+                                knowledge_graph=self.kg_manager,
+                                issue_context=None
                             )
                             # Convert Step5 results to expected format
                             relevance_scores = []
@@ -938,6 +1293,8 @@ class GATREngine:
                             relevance_scores = []
                         
                         for score in relevance_scores:
+                            if self._is_noise_entity(score.entity_name, score.entity_type, error_info):
+                                continue
                             raw_context['entities'].append({
                                 'entity_id': score.entity_id,
                                 'entity_name': score.entity_name,
@@ -945,7 +1302,8 @@ class GATREngine:
                                 'file_path': score.file_path,
                                 'score': score.total_score,
                                 'semantic_similarity': score.semantic_similarity,
-                                'textual_similarity': score.textual_similarity
+                                'textual_similarity': score.textual_similarity,
+                                'source': 'kgcompass'
                             })
             except Exception as e:
                 self.logger.warning(f"Failed to get relevance scores: {e}")
@@ -953,7 +1311,36 @@ class GATREngine:
         # Infer project conventions
         raw_context['conventions'] = self._infer_conventions(raw_context['snippets'])
         
-        self.logger.debug(f"Ingested {len(raw_context['entities'])} entities, {len(raw_context['semantic_hits'])} semantic hits")
+        # Lightweight diagnostics to debug relevance quality.
+        source_counts = {}
+        for ent in raw_context['entities']:
+            src = ent.get('source', 'unknown')
+            source_counts[src] = source_counts.get(src, 0) + 1
+        self.logger.info(
+            "Raw context summary: %d entities, %d semantic hits, source breakdown=%s",
+            len(raw_context['entities']),
+            len(raw_context['semantic_hits']),
+            source_counts,
+        )
+        if raw_context['entities']:
+            top_debug = sorted(
+                raw_context['entities'],
+                key=lambda e: float(e.get('score', e.get('relevance_score', 0.0)) or 0.0),
+                reverse=True,
+            )[:12]
+            self.logger.info(
+                "Top raw entities: %s",
+                [
+                    {
+                        'name': e.get('entity_name', ''),
+                        'type': e.get('entity_type', ''),
+                        'src': e.get('source', ''),
+                        'score': round(float(e.get('score', e.get('relevance_score', 0.0)) or 0.0), 4),
+                        'has_snippet': bool(e.get('code_snippet', '')),
+                    }
+                    for e in top_debug
+                ],
+            )
         return raw_context
     
     def _infer_conventions(self, snippets: List[Dict]) -> Dict:
@@ -1120,12 +1507,12 @@ class GATREngine:
             for query in queries:
                 try:
                     search_result = self.vector_storage.search_similar_entities(query, top_k=10)
-                    results = search_result.get('similar_entities', []) if isinstance(search_result, dict) else search_result
+                    results = self._normalize_vector_hits(search_result)
                     
                     for result in results:
                         entity_name = result.get('entity_name', '')
                         if entity_name and entity_name not in found_entities:
-                            score = result.get('score', 0)
+                            score = result.get('relevance_score', 0)
                             
                             # Context-sensitive boosts
                             name_lower = entity_name.lower()
@@ -1140,6 +1527,7 @@ class GATREngine:
                                 'entity_type': result.get('entity_type', 'method'),
                                 'file_path': result.get('file_path', ''),
                                 'code_snippet': result.get('code_snippet', ''),
+                                'semantic_score': result.get('semantic_similarity', score),
                                 'combined_score': min(score, 1.0),  # Cap at 1.0
                                 'source': 'semantic_alternative',
                                 'relationship': 'possible_fix'
@@ -1171,8 +1559,20 @@ class GATREngine:
             'keywords': [],
             'parent_class': '',  # For inner class lookups
             'inner_class': '',   # The missing inner class/member
-            'language': 'unknown'
+            'language': 'unknown',
+            'line_number': 0,
+            'index_value': ''
         }
+
+        # Generic line number extraction from stack traces/messages.
+        line_match = re.search(r'line\s+(\d+)', error_message, re.IGNORECASE)
+        if line_match:
+            info['line_number'] = int(line_match.group(1))
+
+        # Index value extraction for bounds errors.
+        idx_match = re.search(r'Index\s+(\d+)\s+out\s+of\s+bounds', error_message, re.IGNORECASE)
+        if idx_match:
+            info['index_value'] = idx_match.group(1)
         
         # ===== JAVA/JVM ERROR PATTERNS =====
         
@@ -1370,18 +1770,19 @@ class GATREngine:
             
             # Search vector storage
             search_result = self.vector_storage.search_similar_entities(query, top_k=30)
-            
-            if search_result.get('success'):
-                for hit in search_result.get('results', []):
-                    entities.append({
-                        'entity_id': hit.get('entity_id', ''),
-                        'entity_name': hit.get('entity_name', ''),
-                        'entity_type': hit.get('entity_type', 'unknown'),
-                        'file_path': hit.get('file_path', ''),
-                        'code_snippet': hit.get('code_snippet', ''),
-                        'semantic_score': hit.get('relevance_score', hit.get('score', 0)),
-                        'relationship': 'semantic_match'
-                    })
+
+            for hit in self._normalize_vector_hits(search_result):
+                if self._is_noise_entity(hit.get('entity_name', ''), hit.get('entity_type', ''), error_info):
+                    continue
+                entities.append({
+                    'entity_id': hit.get('entity_id', ''),
+                    'entity_name': hit.get('entity_name', ''),
+                    'entity_type': hit.get('entity_type', 'unknown'),
+                    'file_path': hit.get('file_path', ''),
+                    'code_snippet': hit.get('code_snippet', ''),
+                    'semantic_score': hit.get('semantic_similarity', hit.get('relevance_score', 0)),
+                    'relationship': 'semantic_match'
+                })
                     
         except Exception as e:
             self.logger.warning(f"Semantic retrieval error: {e}")
@@ -1425,26 +1826,39 @@ class GATREngine:
         
         # Calculate combined score with bonuses
         for eid, e in entity_map.items():
+            if self._is_noise_entity(e.get('entity_name', ''), e.get('entity_type', ''), error_info):
+                e['combined_score'] = 0.0
+                continue
+
             # Normalize scores
             graph_norm = min(e.get('graph_score', 0) / 5.0, 1.0)
             semantic_norm = min(e.get('semantic_score', 0), 1.0)
+            keyword_overlap = self._entity_keyword_overlap(e.get('entity_name', ''), error_info)
             
-            # Combined score: weighted average
-            combined = (0.6 * graph_norm) + (0.4 * semantic_norm)
+            # Combined score: bias toward semantic relevance to reduce graph-only noise.
+            combined = (0.45 * graph_norm) + (0.55 * semantic_norm)
             
             # Bonus for methods/functions/classes (more likely to be the fix)
             if e.get('entity_type') in ('function', 'method', 'class', 'interface', 'constructor'):
-                combined += 0.2
+                combined += 0.15
+
+            # Strongly prefer entities that lexically align with parsed error terms.
+            combined += 0.25 * keyword_overlap
+
+            # Penalize graph-only entities with no semantic support.
+            if semantic_norm <= 0 and graph_norm < 0.5:
+                combined -= 0.2
             
             # Bonus if name contains class name from error
             if error_info['class_name']:
                 if error_info['class_name'].lower() in e.get('entity_name', '').lower():
-                    combined += 0.15
+                    combined += 0.10
             
             e['combined_score'] = min(combined, 1.0)
         
         # Sort by combined score
         ranked = sorted(entity_map.values(), key=lambda x: -x['combined_score'])
+        ranked = [r for r in ranked if r.get('combined_score', 0) >= 0.12]
         
         self.logger.debug(f"Combined and ranked {len(ranked)} entities")
         return ranked[:30]  # Top 30
@@ -1483,6 +1897,13 @@ class GATREngine:
         self.logger.info("[GraphRAG Step 8] Augmenting context...")
         
         test_code = broken_test.get('test_code', '')
+        error_info = self._parse_error_message(retrieved_context.get('error', ''))
+        extracted_lines, extracted_numbers = self._extract_failing_line_context(
+            test_code,
+            retrieved_context.get('error', ''),
+            error_info,
+            broken_test,
+        )
         
         augmented = {
             'test': retrieved_context['test'],
@@ -1495,8 +1916,9 @@ class GATREngine:
             'conventions': {},
             # Structured change-location data for the prompt
             'language': broken_test.get('language', 'java'),
-            'broken_lines': broken_test.get('broken_lines', []),
-            'broken_line_numbers': broken_test.get('broken_line_numbers', []),
+            'broken_lines': extracted_lines,
+            'broken_line_numbers': extracted_numbers,
+            'failing_line': extracted_lines[0] if extracted_lines else '',
             'hunk_type': broken_test.get('hunk_type', 'MODIFY'),
             'verdict_status': broken_test.get('verdict_status', 'unknown'),
             'error_lines': broken_test.get('error_lines', []),
@@ -1539,6 +1961,11 @@ class GATREngine:
         augmented['conventions'] = self._extract_conventions(retrieved_context)
         
         self.logger.info(f"[GraphRAG Step 8] Augmented {len(augmented['entities'])} entities")
+        self.logger.info(
+            "[GraphRAG Step 8] failing_line_present=%s failing_line=%s",
+            bool(augmented.get('failing_line')),
+            (augmented.get('failing_line', '') or '').strip()[:180],
+        )
         return augmented
     
     def _find_usage_examples(self, entity_name: str, context: Dict) -> List[str]:
@@ -1600,7 +2027,7 @@ class GATREngine:
         
         return conventions
     
-    def _graphrag_generate_fix(self, augmented_context: Dict, error_info: Dict) -> Tuple[str, str]:
+    def _graphrag_generate_fix(self, augmented_context: Dict, error_info: Dict) -> Tuple[str, str, Dict]:
         """
         GraphRAG Step 9: Generate Fix
         - Format context into structured prompt
@@ -1612,8 +2039,55 @@ class GATREngine:
         
         # Create the enhanced prompt with all context
         system_message, user_prompt = self._create_graphrag_prompt(augmented_context, error_info)
+
+        prompt_payload = {
+            'system_message': system_message,
+            'user_prompt': user_prompt,
+            'model': self.lm_studio_model,
+            'provider': 'lm_studio',
+            'endpoint': self.lm_studio_url,
+            'temperature': 0.2
+        }
         
         self.logger.debug(f"GraphRAG prompt length: {len(user_prompt)} chars (system: {len(system_message)} chars)")
+
+        prompt_snippets = [
+            (e.get('code_snippet', '') or '').strip()
+            for e in augmented_context.get('entities', [])
+            if (e.get('code_snippet', '') or '').strip()
+        ]
+        prompt_snippets = prompt_snippets[:10]
+        failing_line = (augmented_context.get('failing_line', '') or '').strip()
+        failing_line_present = bool(failing_line and failing_line in user_prompt)
+        top_entities = sorted(
+            augmented_context.get('entities', []),
+            key=lambda e: e.get('score', 0),
+            reverse=True,
+        )[:10]
+
+        self.logger.info(
+            "Prompt diagnostics: snippet_count=%d failing_line_present=%s failing_line=%s",
+            len(prompt_snippets),
+            failing_line_present,
+            failing_line[:180],
+        )
+        self.logger.info(
+            "Prompt entities (top10): %s",
+            [
+                {
+                    'name': e.get('name', ''),
+                    'type': e.get('type', ''),
+                    'score': round(float(e.get('score', 0) or 0), 4),
+                    'semantic': round(float(e.get('semantic_score', e.get('semantic_similarity', 0)) or 0), 4),
+                    'kg': round(float(e.get('kgcompass_score', e.get('kg_compass_score', 0)) or 0), 4),
+                }
+                for e in top_entities
+            ],
+        )
+        self.logger.info(
+            "Prompt snippets sent (first lines): %s",
+            [s.split('\n')[0][:180] for s in prompt_snippets],
+        )
         
         # Call LLM
         if self.lm_studio_available:
@@ -1626,12 +2100,12 @@ class GATREngine:
                 
                 if self._is_valid_code(cleaned):
                     self.logger.info("[GraphRAG Step 9] Generated valid repair")
-                    return cleaned, 'graphrag_llm'
+                    return cleaned, 'graphrag_llm', prompt_payload
                 else:
                     self.logger.warning("GraphRAG LLM output invalid, trying fallback")
         
-        # Fallback to rule-based
-        return self._graphrag_fallback_repair(augmented_context, error_info), 'graphrag_fallback'
+        # No fallback in strict mode: return unchanged test code to make non-LLM fixes impossible.
+        return augmented_context.get('test_code', ''), 'graphrag_llm_invalid_output', prompt_payload
     
     def _create_graphrag_prompt(self, augmented_context: Dict, error_info: Dict) -> Tuple[str, str]:
         """
@@ -1657,6 +2131,12 @@ class GATREngine:
         # Extract structured change data
         broken_lines = augmented_context.get('broken_lines', [])
         broken_line_numbers = augmented_context.get('broken_line_numbers', [])
+        failing_line = (augmented_context.get('failing_line', '') or '').strip()
+
+        if failing_line and all((bl or '').strip() != failing_line for bl in broken_lines):
+            broken_lines = [failing_line] + list(broken_lines)
+            broken_line_numbers = ['?'] + list(broken_line_numbers)
+
         hunk_type = augmented_context.get('hunk_type', 'MODIFY')
         verdict_status = augmented_context.get('verdict_status', 'unknown')
 
@@ -1665,6 +2145,12 @@ class GATREngine:
 
         # ── Build KG entity context ──
         entities = augmented_context.get('entities', [])
+        entities = [
+            e for e in entities
+            if self._is_prompt_relevant_entity(e, error_info)
+        ]
+        entities.sort(key=lambda e: e.get('score', 0), reverse=True)
+        entities = entities[:10]
         entity_section = self._build_entity_section(entities)
 
         # ── Build API delta section ──
@@ -1680,6 +2166,21 @@ class GATREngine:
                 ln = broken_line_numbers[i] if i < len(broken_line_numbers) else "?"
                 broken_section += f"  Line {ln}: {line}\n"
             broken_section += "\nYou MUST change at least these lines. Do NOT return them as-is.\n"
+
+        failing_line_section = ""
+        if failing_line:
+            failing_line_section = "\n## CONFIRMED FAILING LINE\n"
+            failing_line_section += f"{failing_line}\n"
+            failing_line_section += "This exact line must be fixed with a minimal change.\n"
+
+        error_hint_section = ""
+        if re.search(r'IndexOutOfBoundsException|out of bounds', error, re.IGNORECASE):
+            error_hint_section = (
+                "\n## ERROR-SPECIFIC HINT\n"
+                "Hint: A collection is accessed with an invalid index. "
+                "Check collection size and ensure index is within bounds. "
+                "Prefer minimal fix by adjusting index.\n"
+            )
 
         # ── Build canonical usage / similar test patterns ──
         usage_section = ""
@@ -1725,7 +2226,7 @@ CRITICAL RULES:
 ```{language}
 {annotated_code}
 ```
-{broken_section}{entity_section}{delta_section}{usage_section}
+{broken_section}{failing_line_section}{error_hint_section}{entity_section}{delta_section}{usage_section}
 ## YOUR TASK
 1. Read the error message and identify what is wrong.
 2. Look at the lines marked with >>> — those are the lines that MUST change.
@@ -1933,7 +2434,7 @@ REPAIRED {language.upper()} CODE:
                           broken_test: Dict,
                           error_message: str,
                           compressed_context: CompressedContext,
-                          aggregated_context: Dict) -> Tuple[str, str]:
+                          aggregated_context: Dict) -> Tuple[str, str, Dict]:
         """
         Step 4: Generate Repaired Test using GraphRAG 3-Step approach
         
@@ -1976,28 +2477,37 @@ REPAIRED {language.upper()} CODE:
         
         # ===== GraphRAG Step 9: Generate Fix =====
         self.logger.info("GraphRAG Step 9: Generating fix...")
+        final_prompt_payload = {}
         
         if self.lm_studio_available:
-            repaired_code, method = self._graphrag_generate_fix(augmented_context, error_info)
+            repaired_code, method, final_prompt_payload = self._graphrag_generate_fix(augmented_context, error_info)
 
-            if self.disable_fallback:
-                self.logger.info("GATR_DISABLE_FALLBACK is enabled; returning raw LLM output")
-                return repaired_code, f"{method}_no_fallback"
+            debug_payload = {
+                'retrieved_context': retrieved_context,
+                'augmented_context': augmented_context,
+                'final_prompt': final_prompt_payload
+            }
 
             if repaired_code and repaired_code.strip() != test_code.strip():
                 self.logger.info(f"GraphRAG generated repair using {method}")
-                return repaired_code, method
+                return repaired_code, method, debug_payload
 
-            self.logger.warning("GraphRAG output unchanged; switching to rule-based fallback")
-            fallback = self._fallback_repair(broken_test, error_message, aggregated_context)
-            return fallback, 'graphrag_forced_fallback'
+            self.logger.warning("GraphRAG output unchanged; strict mode forbids fallback")
+            return repaired_code, 'graphrag_llm_no_change', debug_payload
         else:
-            if self.disable_fallback:
-                self.logger.error("LM Studio unavailable and GATR_DISABLE_FALLBACK enabled; returning original code")
-                return test_code, 'llm_unavailable_no_fallback'
-            self.logger.error("LM Studio/LLM not available - using fallback repair")
-            fallback = self._fallback_repair(broken_test, error_message, aggregated_context)
-            return fallback, 'llm_unavailable_fallback'
+            self.logger.error("LM Studio unavailable; strict mode forbids fallback")
+            return test_code, 'llm_unavailable_no_fallback', {
+                'retrieved_context': retrieved_context,
+                'augmented_context': augmented_context,
+                'final_prompt': {
+                    'system_message': '',
+                    'user_prompt': '',
+                    'model': self.lm_studio_model,
+                    'provider': 'lm_studio',
+                    'endpoint': self.lm_studio_url,
+                    'error': 'LLM unavailable and fallback disabled'
+                }
+            }
     
     def _clean_llm_output(self, output: str) -> str:
         """Clean LLM output to extract only code"""
@@ -2525,6 +3035,14 @@ REPAIRED {language.upper()} CODE:
         raw_context = self._ingest_raw_context(broken_test, error_message)
         compressed_context = self._compress_context(broken_test, error_message, raw_context)
         aggregated_context = self._aggregate_context(compressed_context)
+        retrieved_context = self._graphrag_retrieve_context(broken_test, error_message)
+        augmented_context = self._graphrag_augment_context(retrieved_context, broken_test)
+
+        augmented_context['api_deltas'] = aggregated_context.get('api_deltas', [])
+        augmented_context['canonical_usages'] = aggregated_context.get('canonical_usages', [])
+
+        error_info = self._parse_error_message(error_message)
+        system_message, user_prompt = self._create_graphrag_prompt(augmented_context, error_info)
         
         return {
             'raw_context_summary': {
@@ -2547,6 +3065,18 @@ REPAIRED {language.upper()} CODE:
                 'error_summary': compressed_context.error_summary
             },
             'aggregated_context': aggregated_context
+            ,
+            'raw_context': raw_context,
+            'compressed_context_full': self._serialize_compressed_context(compressed_context),
+            'retrieved_context': retrieved_context,
+            'augmented_context': augmented_context,
+            'final_rag_prompt': {
+                'system_message': system_message,
+                'user_prompt': user_prompt,
+                'model': self.lm_studio_model,
+                'provider': 'lm_studio',
+                'endpoint': self.lm_studio_url
+            }
         }
     
     def get_llm_status(self) -> Dict:
