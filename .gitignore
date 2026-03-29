@@ -44,6 +44,7 @@ workspace/logs/
 
 # Database files
 workspace/gater_knowledge_graph
+workspace/lancedb/
 *.db
 *.sqlite
 
@@ -52,10 +53,12 @@ workspace/repos/
 workspace/data/entities.jsonl
 workspace/data/knowledge_graph.jsonl
 workspace/data/step5_relevance_scores.json
-
 workspace/embeddings_cache/
+
 # Environment variables
 .env
+.env.local
+.env*.local
 
 # Test files
 test_*.py
@@ -66,3 +69,17 @@ check_*.py
 
 # Documentation build
 docs/_build/
+
+.venv/*
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env.local
+frontend/.env*.local
+
+# Package manager locks (optional - uncomment if not needed)
+# frontend/package-lock.json
+# frontend/yarn.lock

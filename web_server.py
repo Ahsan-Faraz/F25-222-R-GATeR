@@ -7,6 +7,7 @@ import os
 import logging
 import json
 import time
+import requests
 import numpy as np
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
@@ -66,6 +67,9 @@ def convert_numpy_types(obj):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
         return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, str):
+        # Handle strings properly - just return as is
+        return obj
     else:
         return obj
 
@@ -254,6 +258,70 @@ def dev_login():
         return redirect(url_for('index'))
     else:
         return jsonify({'error': 'Development mode not enabled'}), 403
+
+@app.route('/auth/sync', methods=['POST'])
+def auth_sync():
+    """Sync authentication from external frontend (Next.js)
+    
+    Accepts a GitHub access token and user info, establishes a Flask session.
+    This allows the Next.js frontend to authenticate via NextAuth and share
+    the auth state with Flask backend.
+    """
+    try:
+        data = request.get_json()
+        github_token = data.get('github_token')
+        user = data.get('user')
+        
+        if not github_token:
+            return jsonify({'error': 'GitHub token is required'}), 400
+        
+        # Store token in session
+        session['oauth_token'] = {'access_token': github_token}
+        
+        # If user info provided, use it; otherwise fetch from GitHub
+        if user:
+            session['user'] = {
+                'login': user.get('name') or user.get('email', '').split('@')[0] or 'user',
+                'name': user.get('name') or 'GitHub User',
+                'email': user.get('email'),
+                'id': user.get('id')
+            }
+        else:
+            # Fetch user info from GitHub
+            import requests
+            headers = {'Authorization': f'Bearer {github_token}'}
+            user_response = requests.get('https://api.github.com/user', headers=headers)
+            if user_response.status_code == 200:
+                session['user'] = user_response.json()
+            else:
+                session['user'] = {'login': 'api_user', 'name': 'API User'}
+        
+        logger.info(f"Session synced for user: {session['user'].get('login', 'unknown')}")
+        return jsonify({
+            'success': True, 
+            'user': session['user'],
+            'message': 'Session synced successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Auth sync error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/auth/status')
+def auth_status():
+    """Check authentication status - useful for frontend to verify auth"""
+    if is_authenticated():
+        user = session.get('user', {})
+        return jsonify({
+            'authenticated': True,
+            'user': {
+                'login': user.get('login'),
+                'name': user.get('name'),
+                'email': user.get('email'),
+                'avatar_url': user.get('avatar_url')
+            }
+        })
+    return jsonify({'authenticated': False})
 
 @app.route('/repo/add', methods=['POST'])
 def add_repository():
@@ -818,12 +886,18 @@ def calculate_kgcompass_relevance():
                         'file_path': candidate.file_path or 'N/A',
                         'path_info': candidate.path_info
                     }
+                    # Debug: Log the score value
+                    logger.debug(f"Entity {candidate.entity_name}: total_score={candidate.total_score}, type={type(candidate.total_score)}")
                 else:
                     # It's already a dictionary
                     formatted_candidate = candidate
                 
                 # Convert numpy types to Python types for JSON serialization
                 formatted_candidate = convert_numpy_types(formatted_candidate)
+                
+                # Debug: Log after conversion
+                logger.debug(f"After conversion - score: {formatted_candidate.get('score')}, type: {type(formatted_candidate.get('score'))}")
+                
                 formatted_candidates.append(formatted_candidate)
             
             # Prepare debug information
@@ -900,8 +974,38 @@ def calculate_kgcompass_relevance():
         }), 500
 
 def is_authenticated():
-    """Check if user is authenticated"""
-    return 'oauth_token' in session and 'user' in session
+    """Check if user is authenticated via session or Authorization header token"""
+    # First check Flask session (traditional OAuth flow)
+    if 'oauth_token' in session and 'user' in session:
+        return True
+    
+    # Check for Authorization header (for API calls from Next.js frontend)
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:]  # Remove 'Bearer ' prefix
+        if token and len(token) > 10:  # Basic validation
+            return True
+    
+    # Check for X-GitHub-Token header (alternative for Next.js frontend)
+    github_token = request.headers.get('X-GitHub-Token', '')
+    if github_token and len(github_token) > 10:
+        return True
+    
+    return False
+
+def get_github_token():
+    """Get GitHub token from session or headers"""
+    # First check Flask session
+    if 'oauth_token' in session:
+        return session['oauth_token'].get('access_token')
+    
+    # Check Authorization header
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        return auth_header[7:]
+    
+    # Check X-GitHub-Token header
+    return request.headers.get('X-GitHub-Token', '')
 
 def parse_repo_url(url):
     """Parse repository owner and name from GitHub URL"""
@@ -1036,11 +1140,21 @@ def search_vectors():
         # Convert numpy types
         results = convert_numpy_types(results)
         
+        # Extract results array from response
+        if isinstance(results, dict) and 'results' in results:
+            # Handle lance_manager response format: {success: True, results: [...], count: N}
+            actual_results = results.get('results', [])
+            result_count = len(actual_results)
+        else:
+            # Handle direct list format from vector_indexer methods
+            actual_results = results if isinstance(results, list) else []
+            result_count = len(actual_results)
+        
         return jsonify({
             'success': True,
             'query': query_text,
-            'total_results': len(results),
-            'results': results
+            'total_results': result_count,
+            'results': actual_results
         })
         
     except Exception as e:

@@ -103,7 +103,7 @@ class GATeRAnalyzer:
         self.entities_output_file = os.getenv('ENTITIES_OUTPUT_FILE', 'workspace/data/entities.jsonl')
         
         # Initialize knowledge graph manager with Kuzu support
-        kuzu_db_path = os.getenv('KUZU_DB_PATH', 'workspace/gater_knowledge_graph.db')
+        kuzu_db_path = os.getenv('KUZU_DB_PATH', 'workspace/gater_knowledge_graph')
         kuzu_buffer_size = int(os.getenv('KUZU_BUFFER_POOL_SIZE', '1073741824'))
         self.kg_manager = KnowledgeGraphManager(kuzu_db_path, kuzu_buffer_size)
         

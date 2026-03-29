@@ -211,12 +211,19 @@ class LanceManager:
             # Format results
             formatted_results = []
             for result in results:
+                # Convert distance to similarity score (0-1, higher is better)
+                distance = float(result.get('_distance', 0.0))
+                # L2 distance to similarity: use exponential decay or simple inversion
+                # For L2 distance, typical range is 0-2, we convert to 0-1 similarity
+                similarity_score = max(0.0, 1.0 - (distance / 2.0))
+                
                 formatted_results.append({
                     'entity_id': result.get('entity_id', ''),
                     'entity_name': result.get('entity_name', ''),
                     'entity_type': result.get('entity_type', ''),
                     'file_path': result.get('file_path', ''),
-                    '_distance': float(result.get('_distance', 0.0)),
+                    '_distance': distance,
+                    'similarity_score': similarity_score,  # Frontend expects this
                     'relevance_score': float(result.get('relevance_score', 0.0)),
                     'semantic_similarity': float(result.get('semantic_similarity', 0.0)),
                     'textual_similarity': float(result.get('textual_similarity', 0.0)),

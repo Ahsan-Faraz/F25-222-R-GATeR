@@ -68,7 +68,7 @@ class VectorIndexer:
             return False
     
     def search_with_filters(self, table_name: str, query_vector: np.ndarray,
-                          filters: Dict[str, Any], top_k: int = 20) -> List[Dict]:
+                          filters: Dict[str, Any], top_k: int = 20) -> Dict[str, Any]:
         """
         Search with metadata filters
         
@@ -79,7 +79,7 @@ class VectorIndexer:
             top_k: Number of results
             
         Returns:
-            List of filtered results
+            Dict with success status and results list
         """
         # Build filter expression
         filter_expressions = []
@@ -126,15 +126,23 @@ class VectorIndexer:
             List of re-ranked results
         """
         # Get more results than needed for reranking
-        results = self.lance_manager.search_vectors(
+        response = self.lance_manager.search_vectors(
             table_name=table_name,
             query_vector=query_vector,
             top_k=top_k * 2
         )
         
+        # Extract results list from response dict
+        if isinstance(response, dict):
+            results = response.get('results', [])
+        else:
+            results = response if isinstance(response, list) else []
+        
         # Re-rank using hybrid score
         for result in results:
-            vector_sim = 1.0 - result.get('similarity_score', 0.0)  # Convert distance to similarity
+            # Use _distance from LanceDB (lower is better)
+            distance = result.get('_distance', 0.0)
+            vector_sim = 1.0 - min(distance, 1.0)  # Convert distance to similarity (capped at 1.0)
             relevance = result.get('relevance_score', 0.0)
             
             # Hybrid score: weighted combination
@@ -174,15 +182,23 @@ class VectorIndexer:
         all_results = {}
         
         for query_vec, weight in zip(query_vectors, weights):
-            results = self.lance_manager.search_vectors(
+            response = self.lance_manager.search_vectors(
                 table_name=table_name,
                 query_vector=query_vec,
                 top_k=top_k * 2
             )
             
+            # Extract results list from response dict
+            if isinstance(response, dict):
+                results = response.get('results', [])
+            else:
+                results = response if isinstance(response, list) else []
+            
             for result in results:
-                entity_id = result['entity_id']
-                score = (1.0 - result.get('similarity_score', 0.0)) * weight
+                entity_id = result.get('entity_id', '')
+                # Use _distance from LanceDB
+                distance = result.get('_distance', 0.0)
+                score = (1.0 - min(distance, 1.0)) * weight
                 
                 if entity_id in all_results:
                     all_results[entity_id]['aggregated_score'] += score
