@@ -198,7 +198,7 @@ export default function RepoManager() {
           {/* Add Repository Form */}
           <form onSubmit={handleAddRepo} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
                 GitHub Repository URL
               </label>
               <input
@@ -206,7 +206,7 @@ export default function RepoManager() {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 placeholder="https://github.com/owner/repo or owner/repo"
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                className="w-full px-4 py-3 border-2 border-[rgba(184,227,233,0.3)] rounded-xl focus:ring-2 focus:ring-[#B8E3E9] focus:border-[#B8E3E9] transition-all bg-[rgba(30,66,74,0.5)] text-[#E8F4F6] placeholder-[rgba(147,177,181,0.6)]"
                 disabled={loading || isAnalyzing}
               />
             </div>
@@ -218,10 +218,10 @@ export default function RepoManager() {
                 id="skipGithubArtifacts"
                 checked={skipGithubArtifacts}
                 onChange={(e) => setSkipGithubArtifacts(e.target.checked)}
-                className="w-4 h-4 text-accent rounded focus:ring-accent"
+                className="w-4 h-4 text-[#4F7C82] bg-[rgba(30,66,74,0.5)] border-[rgba(184,227,233,0.3)] rounded focus:ring-[#B8E3E9]"
                 disabled={loading || isAnalyzing}
               />
-              <label htmlFor="skipGithubArtifacts" className="text-sm text-gray-600">
+              <label htmlFor="skipGithubArtifacts" className="text-sm text-[#B8E3E9]">
                 Skip GitHub Artifacts (PRs, Issues, Commits) for faster analysis
               </label>
             </div>
@@ -233,16 +233,16 @@ export default function RepoManager() {
 
           {/* Current Repository Status */}
           {currentRepo && (
-            <div className="bg-gray-50 rounded-xl p-5 border-2 border-gray-200">
+            <div className="bg-[rgba(30,66,74,0.5)] rounded-xl p-5 border-2 border-[rgba(184,227,233,0.2)]">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h4 className="font-bold text-lg text-primary mb-1">Current Repository</h4>
-                  <p className="text-gray-600 font-medium">
+                  <h4 className="font-bold text-lg text-white mb-1">Current Repository</h4>
+                  <p className="text-[#B8E3E9] font-medium">
                     {currentRepo.owner}/{currentRepo.name}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">{currentRepo.url}</p>
+                  <p className="text-xs text-[#93B1B5] mt-1">{currentRepo.url}</p>
                 </div>
-                <span className="px-3 py-1 bg-green-100 text-green-700 text-sm font-medium rounded-full">
+                <span className="px-3 py-1 bg-[rgba(79,124,130,0.4)] text-[#B8E3E9] text-sm font-medium rounded-full border border-[rgba(184,227,233,0.3)]">
                   Active
                 </span>
               </div>

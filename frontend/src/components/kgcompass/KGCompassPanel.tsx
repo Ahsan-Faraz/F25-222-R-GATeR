@@ -56,7 +56,7 @@ export default function KGCompassPanel() {
     <div className="space-y-6">
       <Card title="KGCompass - Relevance Scoring">
         <div className="space-y-4">
-          <p className="text-gray-600 text-sm">
+          <p className="text-[#B8E3E9] text-sm">
             Find the most relevant code entities for your problem using hybrid scoring:
             semantic similarity, textual matching, and graph distance.
           </p>
@@ -64,14 +64,14 @@ export default function KGCompassPanel() {
           <form onSubmit={handleCalculate} className="space-y-4">
             {/* Problem Description */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
                 Problem Description
               </label>
               <textarea
                 value={problemDescription}
                 onChange={(e) => setProblemDescription(e.target.value)}
                 placeholder="Describe the failing test or the problem you want to fix..."
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-accent focus:border-accent resize-none"
+                className="w-full px-4 py-3 border-2 border-[rgba(184,227,233,0.3)] rounded-xl focus:ring-2 focus:ring-[#B8E3E9] focus:border-[#B8E3E9] resize-none bg-[rgba(30,66,74,0.5)] text-[#B8E3E9] placeholder-[rgba(147,177,181,0.5)] focus:outline-none"
                 rows={4}
               />
             </div>
@@ -79,7 +79,7 @@ export default function KGCompassPanel() {
             {/* Parameters */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
                   Alpha (Semantic Weight): {alpha.toFixed(2)}
                 </label>
                 <Slider
@@ -92,7 +92,7 @@ export default function KGCompassPanel() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
                   Beta (Textual Weight): {beta.toFixed(2)}
                 </label>
                 <Slider
@@ -105,7 +105,7 @@ export default function KGCompassPanel() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
                   Top K Results
                 </label>
                 <input
@@ -114,7 +114,7 @@ export default function KGCompassPanel() {
                   onChange={(e) => setTopK(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
                   min={1}
                   max={50}
-                  className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 border-2 border-[rgba(184,227,233,0.3)] rounded-lg focus:ring-2 focus:ring-[#B8E3E9] bg-[rgba(30,66,74,0.5)] text-[#E8F4F6]"
                 />
               </div>
             </div>
@@ -153,51 +153,51 @@ export default function KGCompassPanel() {
               return (
                 <div 
                   key={result.entity_id || index}
-                  className="bg-gray-50 rounded-lg p-4 border hover:border-accent transition-colors"
+                  className="bg-[rgba(30,66,74,0.6)] rounded-lg p-4 border border-[rgba(184,227,233,0.2)] hover:border-[#B8E3E9] transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-bold text-gray-500">#{index + 1}</span>
-                        <h4 className="font-semibold text-primary">{result.entity_name}</h4>
-                        <span className="text-xs px-2 py-0.5 bg-accent bg-opacity-20 text-accent rounded-full">
+                        <span className="text-sm font-bold text-[#D4A574]">#{index + 1}</span>
+                        <h4 className="font-semibold text-white">{result.entity_name}</h4>
+                        <span className="text-xs px-2 py-0.5 bg-[rgba(79,124,130,0.4)] text-[#B8E3E9] rounded-full border border-[rgba(184,227,233,0.2)]">
                           {result.entity_type}
                         </span>
                       </div>
                       {result.file_path && (
-                        <div className="text-sm text-gray-600">
+                        <div className="text-sm text-[#B8E3E9]">
                           📁 {result.file_path}
                         </div>
                       )}
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-green-600">
+                      <div className="text-2xl font-bold text-[#4ade80]">
                         {score !== null ? `${(score * 100).toFixed(1)}%` : 'N/A'}
                       </div>
-                      <div className="text-xs text-gray-500">relevance</div>
+                      <div className="text-xs text-[#93B1B5]">relevance</div>
                     </div>
                   </div>
 
                   {/* Score Breakdown */}
                   <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                    <div className="bg-blue-50 rounded p-2 text-center">
-                      <div className="font-bold text-blue-600">
+                    <div className="bg-[rgba(59,130,246,0.15)] rounded p-2 text-center border border-[rgba(59,130,246,0.3)]">
+                      <div className="font-bold text-[#60a5fa]">
                         {semanticSim !== null ? `${(semanticSim * 100).toFixed(1)}%` : 'N/A'}
                       </div>
-                      <div className="text-gray-600">Semantic</div>
+                      <div className="text-[#B8E3E9]">Semantic</div>
                     </div>
-                    <div className="bg-purple-50 rounded p-2 text-center">
-                      <div className="font-bold text-purple-600">
+                    <div className="bg-[rgba(168,85,247,0.15)] rounded p-2 text-center border border-[rgba(168,85,247,0.3)]">
+                      <div className="font-bold text-[#c084fc]">
                         {textualSim !== null ? `${(textualSim * 100).toFixed(1)}%` : 'N/A'}
                       </div>
-                      <div className="text-gray-600">Textual</div>
+                      <div className="text-[#B8E3E9]">Textual</div>
                     </div>
                     {result.path_length !== undefined && (
-                      <div className="bg-orange-50 rounded p-2 text-center">
-                        <div className="font-bold text-orange-600">
+                      <div className="bg-[rgba(212,165,116,0.15)] rounded p-2 text-center border border-[rgba(212,165,116,0.3)]">
+                        <div className="font-bold text-[#D4A574]">
                           {result.path_length}
                         </div>
-                        <div className="text-gray-600">Path Length</div>
+                        <div className="text-[#B8E3E9]">Path Length</div>
                       </div>
                     )}
                   </div>

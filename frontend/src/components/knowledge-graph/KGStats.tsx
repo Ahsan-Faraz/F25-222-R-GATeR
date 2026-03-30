@@ -101,12 +101,12 @@ export default function KGStats() {
         {/* Entity Types Breakdown */}
         {Object.keys(entityTypes).length > 0 && (
           <div>
-            <h4 className="font-semibold text-primary mb-3">Entity Types</h4>
+            <h4 className="font-semibold text-white mb-3 text-lg">Entity Types</h4>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
               {Object.entries(entityTypes).map(([type, count]) => (
-                <div key={type} className="bg-gray-50 rounded-lg p-3 border">
-                  <div className="text-lg font-bold text-primary">{count}</div>
-                  <div className="text-xs text-gray-600 capitalize">{type.replace(/_/g, ' ')}</div>
+                <div key={type} className="bg-[rgba(30,66,74,0.5)] rounded-lg p-3 border border-[rgba(184,227,233,0.2)]">
+                  <div className="text-lg font-bold text-[#B8E3E9]">{count}</div>
+                  <div className="text-xs text-[#93B1B5] capitalize">{type.replace(/_/g, ' ')}</div>
                 </div>
               ))}
             </div>
@@ -116,12 +116,12 @@ export default function KGStats() {
         {/* Relationship Types Breakdown */}
         {Object.keys(relationshipTypes).length > 0 && (
           <div>
-            <h4 className="font-semibold text-primary mb-3">Relationship Types</h4>
+            <h4 className="font-semibold text-white mb-3 text-lg">Relationship Types</h4>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
               {Object.entries(relationshipTypes).map(([type, count]) => (
-                <div key={type} className="bg-gray-50 rounded-lg p-3 border">
-                  <div className="text-lg font-bold text-accent">{count}</div>
-                  <div className="text-xs text-gray-600 capitalize">{type.replace(/_/g, ' ')}</div>
+                <div key={type} className="bg-[rgba(30,66,74,0.5)] rounded-lg p-3 border border-[rgba(212,165,116,0.2)]">
+                  <div className="text-lg font-bold text-[#D4A574]">{count}</div>
+                  <div className="text-xs text-[#B8E3E9] capitalize">{type.replace(/_/g, ' ')}</div>
                 </div>
               ))}
             </div>
@@ -150,17 +150,17 @@ function StatCard({
   color: string;
 }) {
   const colorClasses: Record<string, string> = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-200',
-    purple: 'bg-purple-50 text-purple-600 border-purple-200',
-    green: 'bg-green-50 text-green-600 border-green-200',
-    orange: 'bg-orange-50 text-orange-600 border-orange-200',
+    blue: 'bg-[rgba(79,124,130,0.2)] text-[#B8E3E9] border-[rgba(184,227,233,0.3)]',
+    purple: 'bg-[rgba(166,124,82,0.2)] text-[#D4A574] border-[rgba(212,165,116,0.3)]',
+    green: 'bg-[rgba(79,124,130,0.15)] text-[#93B1B5] border-[rgba(147,177,181,0.3)]',
+    orange: 'bg-[rgba(212,165,116,0.2)] text-[#E8D4B8] border-[rgba(232,212,184,0.3)]',
   };
 
   return (
     <div className={`rounded-xl p-4 border-2 ${colorClasses[color] || colorClasses.blue}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xl">{icon}</span>
-        <span className="text-sm font-medium">{label}</span>
+        <span className="text-sm font-medium text-[#B8E3E9]">{label}</span>
       </div>
       <div className="text-3xl font-bold">{value.toLocaleString()}</div>
     </div>

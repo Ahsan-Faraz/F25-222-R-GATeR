@@ -1,16 +1,12 @@
-// Header Component with Navigation
-
 import React from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { useRouter } from 'next/router';
 import Button from '../ui/Button';
 
 export default function Header() {
   const { data: session } = useSession();
-  const router = useRouter();
 
   const handleLogout = async () => {
-    await signOut({ callbackUrl: '/login' });
+    await signOut({ callbackUrl: '/' });
   };
 
   if (!session) {
@@ -18,39 +14,39 @@ export default function Header() {
   }
 
   return (
-    <header className="bg-primary text-white shadow-lg">
-      <div className="container mx-auto px-4 py-4">
+    <header className="bg-gradient-to-r from-[#0B2E33] via-[#1a4a52] to-[#0B2E33] backdrop-blur-md border-b border-[rgba(212,165,116,0.3)] sticky top-0 z-50 shadow-lg">
+      <div className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="bg-accent p-3 rounded-lg">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">GATeR</h1>
-              <p className="text-sm opacity-90">Graph-Augmented Test-case Retrieval</p>
+            <div className="text-2xl font-display font-bold text-white tracking-widest leading-none">
+              GATeR
+              <span className="block text-[10px] font-mono text-[#D4A574] tracking-normal uppercase mt-1">
+                Workspace
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
             {session.user && (
-              <div className="flex items-center gap-3">
-                {session.user.image && (
+              <div className="flex items-center gap-3 bg-[rgba(79,124,130,0.4)] pl-2 pr-4 py-1.5 rounded-full border border-[rgba(184,227,233,0.25)]">
+                {session.user.image ? (
                   <img
                     src={session.user.image}
                     alt={session.user.name || 'User'}
-                    className="w-10 h-10 rounded-full border-2 border-accent"
+                    className="w-8 h-8 rounded-full border-2 border-[#D4A574]"
                   />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#4F7C82] to-[#D4A574] flex items-center justify-center text-xs font-bold text-white">
+                    {session.user.name?.charAt(0) || 'U'}
+                  </div>
                 )}
-                <div className="text-right">
-                  <p className="font-semibold">{session.user.name || session.user.email}</p>
-                  <p className="text-xs opacity-75">{session.user.email}</p>
+                <div className="text-right hidden md:block">
+                  <p className="text-sm font-medium text-white leading-tight">{session.user.name}</p>
                 </div>
               </div>
             )}
-            <Button variant="secondary" size="sm" onClick={handleLogout}>
-              Logout
+            <Button variant="accent" size="sm" onClick={handleLogout} className="text-xs tracking-wider uppercase">
+              Sign Out
             </Button>
           </div>
         </div>

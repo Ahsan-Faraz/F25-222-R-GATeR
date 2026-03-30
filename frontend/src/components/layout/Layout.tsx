@@ -20,10 +20,10 @@ export default function Layout({ children }: LayoutProps) {
   // Show loading while checking authentication
   if (status === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-light">
+      <div className="min-h-screen flex items-center justify-center bg-[#0B2E33]">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#D4A574] mx-auto"></div>
+          <p className="mt-4 text-[#B8E3E9]">Loading...</p>
         </div>
       </div>
     );
@@ -46,10 +46,10 @@ export default function Layout({ children }: LayoutProps) {
       window.location.href = '/login';
     }
     return (
-      <div className="min-h-screen flex items-center justify-center bg-light">
+      <div className="min-h-screen flex items-center justify-center bg-[#0B2E33]">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent mx-auto"></div>
-          <p className="mt-4 text-gray-600">Redirecting to login...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#D4A574] mx-auto"></div>
+          <p className="mt-4 text-[#B8E3E9]">Redirecting to login...</p>
         </div>
       </div>
     );
@@ -57,9 +57,22 @@ export default function Layout({ children }: LayoutProps) {
 
   // Authenticated - render the full layout
   return (
-    <div className="min-h-screen bg-light">
+    <div className="min-h-screen bg-gradient-to-br from-[#0B2E33] via-[#1a4a52] to-[#0B2E33] relative">
+      {/* Subtle background decoration - multiple color blobs */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        {/* Top left - cyan glow */}
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-[#4F7C82] opacity-8 blur-[150px] rounded-full"></div>
+        {/* Bottom right - warm brown glow */}
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-[#D4A574] opacity-8 blur-[150px] rounded-full"></div>
+        {/* Left middle - light cyan */}
+        <div className="absolute top-1/2 left-0 w-64 h-64 bg-[#B8E3E9] opacity-5 blur-[100px] rounded-full"></div>
+        {/* Top right - dark accent */}
+        <div className="absolute top-20 right-10 w-48 h-48 bg-[#0B2E33] opacity-30 blur-[80px] rounded-full"></div>
+        {/* Center - subtle white tint */}
+        <div className="absolute top-1/3 left-1/2 w-72 h-72 bg-white opacity-[0.02] blur-[120px] rounded-full"></div>
+      </div>
       <Header />
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 relative z-10">
         {children}
       </main>
       <Toast />

@@ -11,26 +11,30 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "14.2.18",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "next-auth": "^4.24.10",
-    "typescript": "^5.6.3",
+    "autoprefixer": "^10.4.20",
+    "clsx": "^2.1.1",
     "d3": "^7.9.0",
     "d3-drag": "^3.0.0",
     "d3-force": "^3.0.0",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
-    "autoprefixer": "^10.4.20",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
+    "next": "14.2.18",
+    "next-auth": "^4.24.10",
     "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-syntax-highlighter": "^15.6.1",
+    "tailwind-merge": "^3.5.0",
     "tailwindcss": "^3.4.16",
-    "react-syntax-highlighter": "^15.6.1"
+    "typescript": "^5.6.3"
   },
   "devDependencies": {
+    "@types/d3": "^7.4.3",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
-    "@types/d3": "^7.4.3",
     "@types/react-syntax-highlighter": "^15.5.13",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.18"

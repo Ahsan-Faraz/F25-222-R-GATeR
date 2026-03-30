@@ -115,7 +115,7 @@ export default function KGVisualization() {
     marker.setAttribute('markerHeight', '6');
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('d', 'M 0,-5 L 10,0 L 0,5');
-    path.setAttribute('fill', '#999');
+    path.setAttribute('fill', '#B8E3E9');
     marker.appendChild(path);
     defs.appendChild(marker);
     svg.appendChild(defs);
@@ -155,8 +155,8 @@ export default function KGVisualization() {
         line.setAttribute('y1', String(sourcePos.y));
         line.setAttribute('x2', String(targetPos.x));
         line.setAttribute('y2', String(targetPos.y));
-        line.setAttribute('stroke', '#999');
-        line.setAttribute('stroke-opacity', '0.6');
+        line.setAttribute('stroke', 'rgba(184, 227, 233, 0.4)');
+        line.setAttribute('stroke-opacity', '0.8');
         line.setAttribute('stroke-width', '1');
         line.setAttribute('marker-end', 'url(#arrowhead)');
         linksGroup.appendChild(line);
@@ -185,7 +185,7 @@ export default function KGVisualization() {
       text.setAttribute('dx', '12');
       text.setAttribute('dy', '4');
       text.setAttribute('font-size', '10');
-      text.setAttribute('fill', '#333');
+      text.setAttribute('fill', '#B8E3E9');
       text.textContent = node.name.length > 15 ? node.name.slice(0, 15) + '...' : node.name;
       group.appendChild(text);
 
@@ -228,24 +228,24 @@ export default function KGVisualization() {
     <div className="space-y-4">
       <Card title="Knowledge Graph Visualization">
         <div className="space-y-4">
-          <p className="text-gray-600 text-sm">
+          <p className="text-[#B8E3E9] text-sm">
             Interactive visualization of the code knowledge graph. Click on nodes to see details.
           </p>
 
           {/* Controls */}
           <div className="flex flex-wrap items-center gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#B8E3E9] mb-1">
                 Filter by Type
               </label>
               <select
                 value={filterType}
                 onChange={(e) => setFilterType(e.target.value)}
-                className="border rounded px-3 py-2"
+                className="bg-[rgba(30,66,74,0.6)] border border-[rgba(184,227,233,0.3)] rounded px-3 py-2 text-[#B8E3E9] focus:border-[#B8E3E9] focus:outline-none"
               >
-                <option value="all">All Types</option>
+                <option value="all" className="bg-[#16424a]">All Types</option>
                 {entityTypes.map((type) => (
-                  <option key={type} value={type}>{type}</option>
+                  <option key={type} value={type} className="bg-[#16424a]">{type}</option>
                 ))}
               </select>
             </div>
@@ -265,27 +265,27 @@ export default function KGVisualization() {
                   className="w-3 h-3 rounded-full"
                   style={{ backgroundColor: color }}
                 />
-                <span className="capitalize">{type}</span>
+                <span className="capitalize text-[#B8E3E9]">{type}</span>
               </div>
             ))}
           </div>
 
           {/* Graph Container */}
-          <div className="border rounded-lg bg-gray-50 overflow-hidden">
+          <div className="border border-[rgba(184,227,233,0.25)] rounded-lg bg-[rgba(11,46,51,0.3)] overflow-hidden">
             <svg
               ref={svgRef}
               width="100%"
               height="500"
-              className="bg-white"
+              className="bg-[rgba(22,66,74,0.5)]"
             />
           </div>
 
           {/* Stats */}
           {graphData && (
-            <div className="flex gap-4 text-sm text-gray-600">
-              <span>Nodes: {graphData.entities.length}</span>
-              <span>Edges: {graphData.relationships.length}</span>
-              <span className="text-yellow-600">
+            <div className="flex gap-4 text-sm text-[#B8E3E9]">
+              <span className="text-white font-medium">Nodes: {graphData.entities.length}</span>
+              <span className="text-white font-medium">Edges: {graphData.relationships.length}</span>
+              <span className="text-[#D4A574]">
                 (Showing max 100 nodes for performance)
               </span>
             </div>

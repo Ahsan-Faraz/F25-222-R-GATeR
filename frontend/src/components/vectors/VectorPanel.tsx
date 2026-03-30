@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { semanticSearch, getVectorStats } from '@/lib/api/vectors';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
+import { Search, FileCode } from 'lucide-react';
 
 interface SearchResult {
   entity_id: string;
@@ -57,36 +58,34 @@ export default function VectorPanel() {
     <div className="space-y-6">
       <Card title="Vector Semantic Search">
         <div className="space-y-4">
-          <p className="text-gray-600 text-sm">
+          <p className="text-[var(--color-text-muted)] text-sm">
             Search code entities using natural language. Powered by sentence-transformers embeddings.
           </p>
 
-          {/* Stats Summary */}
           {stats && (
-            <div className="bg-gray-50 rounded-lg p-3 flex gap-4 text-sm">
-              <span><strong>Total Vectors:</strong> {stats.total_vectors || 0}</span>
-              <span><strong>Tables:</strong> {stats.table_names?.length || 0}</span>
+            <div className="bg-white/5 border border-white/10 rounded-lg p-3 flex gap-4 text-sm text-[var(--color-text-muted)]">
+              <span><strong className="text-white">Total Vectors:</strong> {stats.total_vectors || 0}</span>
+              <span><strong className="text-white">Tables:</strong> {stats.table_names?.length || 0}</span>
             </div>
           )}
 
-          {/* Search Form */}
           <form onSubmit={handleSearch} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-white mb-2">
                 Search Query
               </label>
               <textarea
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Describe what you're looking for (e.g., 'function that parses JSON data')"
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-accent focus:border-accent resize-none"
+                className="w-full px-4 py-3 bg-black/30 border border-white/10 text-white rounded-xl focus:ring-2 focus:ring-[var(--color-cyan)] focus:border-[var(--color-cyan)] resize-none placeholder:text-white/20"
                 rows={3}
               />
             </div>
 
             <div className="flex items-center gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-white mb-1">
                   Results (Top K)
                 </label>
                 <input
@@ -95,56 +94,55 @@ export default function VectorPanel() {
                   onChange={(e) => setTopK(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
                   min={1}
                   max={50}
-                  className="w-24 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-accent"
+                  className="w-24 px-3 py-2 bg-black/40 border border-white/20 text-white rounded-lg focus:ring-2 focus:ring-[var(--color-cyan)] focus:border-transparent outline-none"
                 />
               </div>
               <div className="flex-1" />
-              <Button type="submit" loading={loading}>
-                🔍 Search
+              <Button type="submit" loading={loading} className="gap-2 bg-[var(--color-cyan)] text-[#0f0f13] hover:brightness-110">
+                <Search className="w-4 h-4" /> Search
               </Button>
             </div>
           </form>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3">
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg p-3">
               {error}
             </div>
           )}
         </div>
       </Card>
 
-      {/* Search Results */}
       {results.length > 0 && (
         <Card title={`Search Results (${results.length})`}>
           <div className="space-y-3">
             {results.map((result, index) => (
               <div 
                 key={result.entity_id || index}
-                className="bg-gray-50 rounded-lg p-4 border hover:border-accent transition-colors"
+                className="bg-white/5 rounded-lg p-4 border border-white/5 hover:border-white/20 transition-colors"
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <h4 className="font-semibold text-primary">{result.entity_name}</h4>
-                    <span className="text-xs px-2 py-1 bg-accent bg-opacity-20 text-accent rounded-full">
+                    <h4 className="font-semibold text-white">{result.entity_name}</h4>
+                    <span className="text-xs px-2 py-0.5 bg-[var(--color-cyan)]/10 text-[var(--color-cyan)] border border-[var(--color-cyan)]/20 rounded-full mt-1 inline-block">
                       {result.entity_type}
                     </span>
                   </div>
                   <div className="text-right">
-                    <div className="text-lg font-bold text-green-600">
+                    <div className="text-lg font-display font-bold text-emerald-400 tracking-wider">
                       {(result.similarity_score * 100).toFixed(1)}%
                     </div>
-                    <div className="text-xs text-gray-500">similarity</div>
+                    <div className="text-[10px] text-[var(--color-text-faint)] uppercase tracking-widest">similarity</div>
                   </div>
                 </div>
                 
                 {result.file_path && (
-                  <div className="text-sm text-gray-600 mb-2">
-                    📁 {result.file_path}
+                  <div className="text-xs text-[var(--color-text-muted)] mt-2 font-mono flex items-center gap-1.5 opacity-80">
+                    <FileCode className="w-3 h-3 text-[var(--color-cyan)]" /> {result.file_path}
                   </div>
                 )}
                 
                 {result.source_code && (
-                  <pre className="text-xs bg-gray-800 text-green-400 p-3 rounded-lg overflow-x-auto mt-2 max-h-40">
+                  <pre className="text-xs bg-black/50 text-emerald-400 p-3 rounded-lg overflow-x-auto mt-3 max-h-40 border border-white/5 font-mono">
                     {result.source_code.slice(0, 500)}
                     {result.source_code.length > 500 && '...'}
                   </pre>
@@ -157,7 +155,7 @@ export default function VectorPanel() {
 
       {results.length === 0 && query && !loading && !error && (
         <Card>
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-[var(--color-text-muted)]">
             No results found. Try a different query or analyze a repository first.
           </div>
         </Card>

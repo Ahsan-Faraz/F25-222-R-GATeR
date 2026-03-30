@@ -1,5 +1,3 @@
-// Reusable Card Component
-
 import React, { ReactNode } from 'react';
 
 interface CardProps {
@@ -11,10 +9,11 @@ interface CardProps {
 
 export default function Card({ children, title, className = '', noPadding = false }: CardProps) {
   return (
-    <div className={`bg-white rounded-2xl shadow-card hover:shadow-card-hover transition-shadow ${className}`}>
+    // Instead of old white bg, use the new GlassCard CSS for dashboard uniformity
+    <div className={`GlassCard ${className}`}>
       {title && (
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-xl font-bold text-primary">{title}</h3>
+        <div className="px-6 py-4 border-b border-[rgba(184,227,233,0.15)]">
+          <h3 className="text-xl font-bold text-white tracking-wide">{title}</h3>
         </div>
       )}
       <div className={noPadding ? '' : 'p-6'}>
