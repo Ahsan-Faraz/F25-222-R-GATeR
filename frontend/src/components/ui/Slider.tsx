@@ -1,4 +1,4 @@
-// Slider Component for alpha/beta controls
+// Slider Component - Minimalist-Futurism Design
 
 import React, { ChangeEvent } from 'react';
 
@@ -25,25 +25,32 @@ export default function Slider({
     onChange(parseFloat(e.target.value));
   };
 
+  const percentage = ((value - min) / (max - min)) * 100;
+
   return (
     <div className="space-y-2">
       {label && (
         <div className="flex justify-between items-center">
-          <label className="text-sm font-medium text-gray-700">{label}</label>
+          <label className="text-xs text-text-muted uppercase tracking-wider">{label}</label>
           {showValue && (
-            <span className="text-sm font-semibold text-accent">{value.toFixed(2)}</span>
+            <span className="text-sm font-mono text-text-primary">{value.toFixed(2)}</span>
           )}
         </div>
       )}
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={handleChange}
-        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-accent"
-      />
+      <div className="relative">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={handleChange}
+          className="slider-input w-full"
+          style={{
+            background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${percentage}%, #27272a ${percentage}%, #27272a 100%)`
+          }}
+        />
+      </div>
     </div>
   );
 }

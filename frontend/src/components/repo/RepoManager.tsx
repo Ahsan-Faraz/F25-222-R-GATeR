@@ -1,4 +1,4 @@
-// Repository Manager Component
+// Repository Manager Component - Minimalist-Futurism Design
 
 import React, { useState, useEffect } from 'react';
 import { useAppState } from '@/context/AppStateContext';
@@ -12,6 +12,7 @@ import {
   pullAndAnalyze,
   getAnalysisStatus 
 } from '@/lib/api/repo';
+import { FolderGit2, Search, RefreshCw, Download, CircleDot, GitBranch, Clock } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import AnalysisProgress from './AnalysisProgress';
@@ -25,7 +26,6 @@ export default function RepoManager() {
   const { currentRepo, isAnalyzing, setCurrentRepo, setIsAnalyzing, setAnalysisProgress } = useAppState();
   const { showToast } = useToast();
 
-  // Enable progress polling when analyzing
   useAnalysisProgress(isAnalyzing);
 
   useEffect(() => {
@@ -39,9 +39,11 @@ export default function RepoManager() {
       if (data.repo_info) {
         setCurrentRepo(data.repo_info);
       }
-    } catch (error) {
-      // No repo set yet, that's fine
-      console.debug('No current repo:', error);
+    } catch (error: any) {
+      // 400 error is expected when no repo is selected - don't log it
+      if (error?.status !== 400) {
+        console.debug('Failed to load repo status:', error);
+      }
     }
   };
 
@@ -72,9 +74,8 @@ export default function RepoManager() {
       if (result.success && result.repo_info) {
         setCurrentRepo(result.repo_info);
         showToast('success', result.message || `Repository ${result.repo_info.name} added successfully`);
-        setRepoUrl(''); // Clear input
+        setRepoUrl('');
         
-        // Auto-start analysis if needed
         if (result.needs_analysis) {
           showToast('info', 'Starting analysis...');
           setTimeout(() => handleAnalyze(), 500);
@@ -99,7 +100,6 @@ export default function RepoManager() {
     setIsAnalyzing(true);
     setAnalysisResults(null);
     
-    // Reset progress
     setAnalysisProgress({
       step: 0,
       step_name: '',
@@ -119,7 +119,6 @@ export default function RepoManager() {
         showToast('success', result.message || 'Repository analysis completed');
         setAnalysisResults(result.results || result);
         
-        // Update progress to completed
         setAnalysisProgress({
           step: 6,
           step_name: 'Complete',
@@ -132,7 +131,6 @@ export default function RepoManager() {
           status: 'completed',
         });
         
-        // Reload repo status
         await loadCurrentRepo();
       } else {
         showToast('error', (result as any).error || 'Analysis failed');
@@ -193,98 +191,95 @@ export default function RepoManager() {
 
   return (
     <div className="space-y-6">
-      <Card title="Repository Management">
-        <div className="space-y-6">
-          {/* Add Repository Form */}
-          <form onSubmit={handleAddRepo} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-[#B8E3E9] mb-2">
-                GitHub Repository URL
-              </label>
+      {/* Add Repository */}
+      <Card title="Add Repository">
+        <form onSubmit={handleAddRepo} className="space-y-4">
+          <div className="flex gap-3">
+            <div className="flex-1">
               <input
                 type="text"
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
-                placeholder="https://github.com/owner/repo or owner/repo"
-                className="w-full px-4 py-3 border-2 border-[#4F7C82] rounded-xl focus:ring-2 focus:ring-[#B8E3E9] focus:border-[#B8E3E9] transition-all bg-[#0B2E33] text-[#E8F4F6] placeholder-[#93B1B5]/60"
+                placeholder="owner/repo or https://github.com/owner/repo"
+                className="ghost-input w-full"
                 disabled={loading || isAnalyzing}
               />
             </div>
-            
-            {/* Options */}
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="skipGithubArtifacts"
-                checked={skipGithubArtifacts}
-                onChange={(e) => setSkipGithubArtifacts(e.target.checked)}
-                className="w-4 h-4 text-[#4F7C82] bg-[#0B2E33] border-[#4F7C82] rounded focus:ring-[#B8E3E9]"
-                disabled={loading || isAnalyzing}
-              />
-              <label htmlFor="skipGithubArtifacts" className="text-sm text-[#B8E3E9]">
-                Skip GitHub Artifacts (PRs, Issues, Commits) for faster analysis
-              </label>
-            </div>
-            
             <Button type="submit" loading={loading} disabled={isAnalyzing}>
-              Add Repository
+              Add
             </Button>
-          </form>
+          </div>
+          
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={skipGithubArtifacts}
+              onChange={(e) => setSkipGithubArtifacts(e.target.checked)}
+              className="w-4 h-4 rounded border-border bg-surface text-accent focus:ring-accent"
+              disabled={loading || isAnalyzing}
+            />
+            <span className="text-sm text-text-secondary">
+              Skip GitHub artifacts (faster analysis)
+            </span>
+          </label>
+        </form>
+      </Card>
 
-          {/* Current Repository Status */}
-          {currentRepo && (
-            <div className="bg-[#16424a] rounded-xl p-5 border-2 border-[#4F7C82]">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h4 className="font-bold text-lg text-white mb-1">Current Repository</h4>
-                  <p className="text-[#B8E3E9] font-medium">
-                    {currentRepo.owner}/{currentRepo.name}
-                  </p>
-                  <p className="text-xs text-[#93B1B5] mt-1">{currentRepo.url}</p>
-                </div>
-                <span className="px-3 py-1 bg-[#2a4a42] text-[#B8E3E9] text-sm font-medium rounded-full border border-[#4F7C82]">
-                  Active
-                </span>
+      {/* Current Repository */}
+      {currentRepo && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-md bg-surface-elevated border border-border flex items-center justify-center">
+                <FolderGit2 className="w-5 h-5 text-accent" />
               </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button 
-                  onClick={handleAnalyze} 
-                  size="sm" 
-                  disabled={loading || isAnalyzing}
-                  variant="primary"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <span className="animate-spin mr-2">⚙️</span>
-                      Analyzing...
-                    </>
-                  ) : (
-                    '🔍 Analyze Repository'
-                  )}
-                </Button>
-                <Button 
-                  onClick={handleCheckUpdates} 
-                  size="sm" 
-                  variant="secondary" 
-                  loading={checkingUpdates}
-                  disabled={loading || isAnalyzing}
-                >
-                  🔄 Check Updates
-                </Button>
-                <Button 
-                  onClick={handlePull} 
-                  size="sm" 
-                  variant="accent" 
-                  disabled={loading || isAnalyzing}
-                >
-                  ⬇️ Pull & Analyze
-                </Button>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-text-primary font-mono font-medium">
+                    {currentRepo.owner}/{currentRepo.name}
+                  </span>
+                  <span className="flex items-center gap-1 text-green-500 text-xs">
+                    <CircleDot className="w-2 h-2 fill-current" />
+                    Active
+                  </span>
+                </div>
+                <span className="text-xs text-text-muted font-mono">{currentRepo.url}</span>
               </div>
             </div>
-          )}
-        </div>
-      </Card>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button 
+              onClick={handleAnalyze} 
+              size="sm" 
+              variant="ghost"
+              disabled={loading || isAnalyzing}
+              icon={<Search className="w-4 h-4" />}
+            >
+              {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+            </Button>
+            <Button 
+              onClick={handleCheckUpdates} 
+              size="sm" 
+              variant="ghost" 
+              loading={checkingUpdates}
+              disabled={loading || isAnalyzing}
+              icon={<RefreshCw className="w-4 h-4" />}
+            >
+              Check Updates
+            </Button>
+            <Button 
+              onClick={handlePull} 
+              size="sm" 
+              variant="ghost" 
+              disabled={loading || isAnalyzing}
+              icon={<Download className="w-4 h-4" />}
+            >
+              Pull & Analyze
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Analysis Progress */}
       {isAnalyzing && <AnalysisProgress />}
@@ -292,47 +287,39 @@ export default function RepoManager() {
       {/* Analysis Results */}
       {analysisResults && !isAnalyzing && (
         <Card title="Analysis Results">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Statistical Ribbon */}
+          <div className="stat-ribbon">
             {analysisResults.entities_extracted !== undefined && (
-              <div className="bg-[#1a4a52] p-4 rounded-lg text-center border border-[#4F7C82]">
-                <div className="text-2xl font-bold text-[#B8E3E9]">
-                  {analysisResults.entities_extracted}
-                </div>
-                <div className="text-sm text-[#93B1B5]">Entities Extracted</div>
+              <div className="stat-item">
+                <span className="stat-label">Entities</span>
+                <span className="stat-value">{analysisResults.entities_extracted}</span>
               </div>
             )}
             {analysisResults.relationships_detected !== undefined && (
-              <div className="bg-[#2a3f36] p-4 rounded-lg text-center border border-[#D4A574]">
-                <div className="text-2xl font-bold text-[#D4A574]">
-                  {analysisResults.relationships_detected}
-                </div>
-                <div className="text-sm text-[#E8D4B8]">Relationships</div>
+              <div className="stat-item">
+                <span className="stat-label">Relationships</span>
+                <span className="stat-value">{analysisResults.relationships_detected}</span>
               </div>
             )}
             {analysisResults.knowledge_graph?.nodes !== undefined && (
-              <div className="bg-[#16424a] p-4 rounded-lg text-center border border-[#4F7C82]">
-                <div className="text-2xl font-bold text-emerald-400">
-                  {analysisResults.knowledge_graph.nodes}
-                </div>
-                <div className="text-sm text-[#93B1B5]">Graph Nodes</div>
+              <div className="stat-item">
+                <span className="stat-label">Nodes</span>
+                <span className="stat-value">{analysisResults.knowledge_graph.nodes}</span>
               </div>
             )}
             {analysisResults.knowledge_graph?.edges !== undefined && (
-              <div className="bg-[#2a3530] p-4 rounded-lg text-center border border-[#A67C52]">
-                <div className="text-2xl font-bold text-[#E8D4B8]">
-                  {analysisResults.knowledge_graph.edges}
-                </div>
-                <div className="text-sm text-[#D4A574]">Graph Edges</div>
+              <div className="stat-item">
+                <span className="stat-label">Edges</span>
+                <span className="stat-value">{analysisResults.knowledge_graph.edges}</span>
               </div>
             )}
           </div>
           
           {analysisResults.vector_sync && (
-            <div className="mt-4 p-3 bg-[#16424a] rounded-lg border border-[#4F7C82]">
-              <span className="text-sm text-[#B8E3E9]">
-                Vector Sync: {analysisResults.vector_sync.success ? '✅' : '❌'} 
-                {analysisResults.vector_sync.vectors_synced !== undefined && 
-                  ` - ${analysisResults.vector_sync.vectors_synced} vectors synced`}
+            <div className="mt-4 py-2 px-3 bg-surface-elevated border border-border rounded-md flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${analysisResults.vector_sync.success ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-sm text-text-secondary font-mono">
+                Vector Sync: {analysisResults.vector_sync.vectors_synced ?? 0} vectors
               </span>
             </div>
           )}

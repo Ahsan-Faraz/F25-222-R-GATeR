@@ -5,18 +5,27 @@ interface CardProps {
   title?: string;
   className?: string;
   noPadding?: boolean;
+  action?: ReactNode;
 }
 
-export default function Card({ children, title, className = '', noPadding = false }: CardProps) {
+export default function Card({ 
+  children, 
+  title, 
+  className = '', 
+  noPadding = false,
+  action 
+}: CardProps) {
   return (
-    // Instead of old white bg, use the new GlassCard CSS for dashboard uniformity
-    <div className={`GlassCard ${className}`}>
+    <div className={`gater-card ${className}`}>
       {title && (
-        <div className="px-6 py-4 border-b border-[rgba(184,227,233,0.15)]">
-          <h3 className="text-xl font-bold text-white tracking-wide">{title}</h3>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-text-secondary">
+            {title}
+          </h3>
+          {action && <div>{action}</div>}
         </div>
       )}
-      <div className={noPadding ? '' : 'p-6'}>
+      <div className={noPadding ? '' : 'p-5'}>
         {children}
       </div>
     </div>

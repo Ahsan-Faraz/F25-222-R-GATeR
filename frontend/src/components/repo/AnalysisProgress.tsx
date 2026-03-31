@@ -1,91 +1,94 @@
-// Analysis Progress Component - Real-time progress display matching Flask backend
+// Analysis Progress Component - Minimalist-Futurism Design
 
 import React from 'react';
 import { useAppState } from '@/context/AppStateContext';
+import { FolderGit2, Download, Search, Network, Package, Cpu, Check } from 'lucide-react';
 
 // Step definitions matching Flask backend
 const STEPS = [
-  { id: 1, name: 'Repository Added', icon: '📁' },
-  { id: 2, name: 'Cloning/Updating', icon: '⬇️' },
-  { id: 3, name: 'Extracting Entities', icon: '🔍' },
-  { id: 4, name: 'Building Knowledge Graph', icon: '🕸️' },
-  { id: 5, name: 'GitHub Artifacts', icon: '📦' },
-  { id: 6, name: 'Vector Embeddings', icon: '🧮' },
+  { id: 1, name: 'Repository Added', Icon: FolderGit2 },
+  { id: 2, name: 'Cloning/Updating', Icon: Download },
+  { id: 3, name: 'Extracting Entities', Icon: Search },
+  { id: 4, name: 'Building Knowledge Graph', Icon: Network },
+  { id: 5, name: 'GitHub Artifacts', Icon: Package },
+  { id: 6, name: 'Vector Embeddings', Icon: Cpu },
 ];
 
 export default function AnalysisProgress() {
   const { analysisProgress, isAnalyzing } = useAppState();
 
-  // Show component when analyzing or when there's progress
   if (!isAnalyzing && (!analysisProgress || analysisProgress.step === 0)) {
     return null;
   }
 
   const currentStep = analysisProgress?.step || 0;
-  const stepName = analysisProgress?.step_name || '';
   const stepDescription = analysisProgress?.step_description || '';
   const details = analysisProgress?.details || {};
   const percentage = analysisProgress?.percentage || 0;
 
   return (
-    <div className="bg-[#1a4a52] border-2 border-[#D4A574] rounded-2xl p-6 shadow-lg">
-      <h4 className="font-bold text-white mb-4 flex items-center gap-2">
-        <span className="animate-spin inline-block">⚙️</span>
-        Analysis in Progress
-      </h4>
+    <div className="gater-card p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-sm font-semibold text-text-primary uppercase tracking-wider">
+          Analysis Progress
+        </h4>
+        <span className="font-mono text-accent text-sm">{percentage}%</span>
+      </div>
 
       {/* Progress Bar */}
       <div className="mb-6">
-        <div className="flex justify-between text-sm mb-2">
-          <span className="text-[#B8E3E9]">Step {currentStep} of {STEPS.length}</span>
-          <span className="font-bold text-[#D4A574]">{percentage}%</span>
-        </div>
-        <div className="w-full bg-[#0B2E33] rounded-full h-3 border border-[#4F7C82]">
+        <div className="w-full bg-surface-active rounded-full h-1">
           <div
-            className="bg-gradient-to-r from-[#4ade80] to-[#22c55e] h-3 rounded-full transition-all duration-500 ease-out"
+            className="bg-accent h-1 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${percentage}%` }}
           />
         </div>
       </div>
 
       {/* Step List */}
-      <div className="space-y-3">
+      <div className="space-y-1">
         {STEPS.map((step) => {
           const isCompleted = currentStep > step.id;
           const isActive = currentStep === step.id;
-          const isPending = currentStep < step.id;
+          const Icon = step.Icon;
 
           return (
             <div
               key={step.id}
-              className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-300 ${
+              className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
                 isActive
-                  ? 'bg-[#2a3f36] border-2 border-[#D4A574]'
+                  ? 'bg-surface-active'
                   : isCompleted
-                  ? 'bg-[#1a3a2f] border border-[#4ade80]'
-                  : 'bg-[#0B2E33] border border-[#4F7C82] opacity-50'
+                  ? 'bg-transparent'
+                  : 'bg-transparent opacity-40'
               }`}
             >
               {/* Step Icon/Status */}
               <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm ${
+                className={`w-6 h-6 rounded-md flex items-center justify-center ${
                   isCompleted
-                    ? 'bg-[#4ade80] text-[#0B2E33]'
+                    ? 'bg-green-600 text-white'
                     : isActive
-                    ? 'bg-[#D4A574] text-[#0B2E33] animate-pulse'
-                    : 'bg-[#4F7C82] text-[#93B1B5]'
+                    ? 'bg-accent text-white'
+                    : 'bg-surface-hover text-text-muted'
                 }`}
               >
-                {isCompleted ? '✓' : step.icon}
+                {isCompleted ? (
+                  <Check className="w-3.5 h-3.5" />
+                ) : (
+                  <Icon className="w-3.5 h-3.5" />
+                )}
               </div>
 
               {/* Step Info */}
               <div className="flex-1">
-                <div className={`font-medium ${isActive ? 'text-[#D4A574]' : isCompleted ? 'text-[#4ade80]' : 'text-[#B8E3E9]'}`}>
+                <div className={`text-sm ${
+                  isActive ? 'text-text-primary' : isCompleted ? 'text-text-secondary' : 'text-text-muted'
+                }`}>
                   {step.name}
                 </div>
                 {isActive && stepDescription && (
-                  <div className="text-sm text-[#B8E3E9] mt-1">
+                  <div className="text-xs text-text-muted mt-0.5">
                     {stepDescription}
                   </div>
                 )}
@@ -93,49 +96,39 @@ export default function AnalysisProgress() {
 
               {/* Active indicator */}
               {isActive && (
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-[#D4A574] rounded-full animate-ping" />
-                  <span className="text-xs text-[#D4A574] font-medium">Processing</span>
-                </div>
+                <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
               )}
             </div>
           );
         })}
       </div>
 
-      {/* Details Preview (for steps 3 and 4) */}
+      {/* Details */}
       {currentStep >= 3 && Object.keys(details).length > 0 && (
-        <div className="mt-4 p-4 bg-[#0B2E33] rounded-lg border border-[#4F7C82]">
-          <h5 className="font-medium text-sm text-[#D4A574] mb-2">Extraction Details:</h5>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="stat-ribbon text-xs">
             {details.classes !== undefined && (
-              <div className="bg-[#16424a] p-2 rounded border border-[#4F7C82]">
-                <span className="text-[#93B1B5]">Classes:</span>{' '}
-                <span className="font-bold text-white">{details.classes}</span>
+              <div className="stat-item py-2 px-4">
+                <span className="stat-label text-[10px]">Classes</span>
+                <span className="stat-value text-base">{details.classes}</span>
               </div>
             )}
             {details.functions !== undefined && (
-              <div className="bg-[#16424a] p-2 rounded border border-[#4F7C82]">
-                <span className="text-[#93B1B5]">Functions:</span>{' '}
-                <span className="font-bold text-white">{details.functions}</span>
+              <div className="stat-item py-2 px-4">
+                <span className="stat-label text-[10px]">Functions</span>
+                <span className="stat-value text-base">{details.functions}</span>
               </div>
             )}
             {details.tests !== undefined && (
-              <div className="bg-[#16424a] p-2 rounded border border-[#4F7C82]">
-                <span className="text-[#93B1B5]">Tests:</span>{' '}
-                <span className="font-bold text-white">{details.tests}</span>
+              <div className="stat-item py-2 px-4">
+                <span className="stat-label text-[10px]">Tests</span>
+                <span className="stat-value text-base">{details.tests}</span>
               </div>
             )}
             {details.nodes !== undefined && (
-              <div className="bg-[#16424a] p-2 rounded border border-[#4F7C82]">
-                <span className="text-[#93B1B5]">Nodes:</span>{' '}
-                <span className="font-bold text-white">{details.nodes}</span>
-              </div>
-            )}
-            {details.relationships !== undefined && (
-              <div className="bg-[#16424a] p-2 rounded border border-[#4F7C82]">
-                <span className="text-[#93B1B5]">Relationships:</span>{' '}
-                <span className="font-bold text-white">{details.relationships}</span>
+              <div className="stat-item py-2 px-4">
+                <span className="stat-label text-[10px]">Nodes</span>
+                <span className="stat-value text-base">{details.nodes}</span>
               </div>
             )}
           </div>

@@ -2,198 +2,287 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import Inter and JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @layer base {
   :root {
-    /* Winter Chill Theme - Enhanced with Warm Accents */
+    /* Minimalist-Futurism Color System */
+    --color-bg: #000000;
+    --color-bg-zinc: #09090b;
+    --color-bg-elevated: #0a0a0a;
     
-    /* Base Colors */
-    --color-bg: #0B2E33;                    /* Very dark deep teal - main background */
-    --color-bg-lighter: #16424a;            /* Lighter teal for elevated surfaces */
-    --color-surface: rgba(30, 66, 74, 0.6); /* Card backgrounds with better visibility */
+    --color-surface: #09090b;
+    --color-surface-hover: #18181b;
+    --color-surface-active: #27272a;
     
-    /* Accent Colors */
-    --color-primary: #B8E3E9;               /* Light cyan - primary accents, important text */
-    --color-secondary: #4F7C82;             /* Dark slate - buttons, borders */
-    --color-tertiary: #93B1B5;              /* Muted gray-blue - less important UI */
+    --color-border: #27272a;
+    --color-border-subtle: #1f1f23;
+    --color-border-hover: #3f3f46;
     
-    /* Warm Accents */
-    --color-warm-primary: #D4A574;          /* Warm tan/brown - for contrast */
-    --color-warm-secondary: #A67C52;        /* Darker brown - warm highlights */
-    --color-warm-light: #E8D4B8;            /* Light cream - warm text */
+    --color-text-primary: #fafafa;
+    --color-text-secondary: #a1a1aa;
+    --color-text-muted: #71717a;
+    --color-text-faint: #52525b;
     
-    /* Text Colors - Highly Visible */
-    --color-text-primary: #FFFFFF;          /* Pure white - headings, important text */
-    --color-text-secondary: #B8E3E9;        /* Light cyan - body text, very visible */
-    --color-text-muted: #93B1B5;            /* Muted blue - labels (still visible) */
-    --color-text-warm: #E8D4B8;             /* Warm cream - alternative text */
-    --color-text-faint: rgba(184, 227, 233, 0.4);  /* Very subtle text */
+    --color-accent: #3b82f6;
+    --color-accent-hover: #2563eb;
     
-    /* UI Elements */
-    --color-border: rgba(184, 227, 233, 0.2);
-    --color-border-strong: rgba(184, 227, 233, 0.4);
-    --color-input-bg: rgba(255, 255, 255, 0.05);
-    --color-input-border: rgba(147, 177, 181, 0.3);
-    
-    /* State Colors */
-    --color-success: #4ade80;
+    --color-success: #22c55e;
+    --color-warning: #f59e0b;
     --color-error: #ef4444;
-    --color-warning: #D4A574;
-    --color-info: #B8E3E9;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
   }
 
   body {
-    @apply bg-bg text-primary;
-    background-color: var(--color-bg);
-    color: var(--color-text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-    -webkit-font-smoothing: antialiased;
+    @apply bg-black text-text-primary antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Remove default tap highlight on mobile */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer components {
+  /* === CORE COMPONENTS === */
+  
+  /* Pro Card - No shadows, just borders */
+  .gater-card {
+    @apply bg-bg-zinc border border-border rounded-card overflow-hidden;
+  }
+  
+  .gater-card-hover {
+    @apply gater-card transition-colors hover:border-border-hover;
+  }
+
+  /* Ghost Input */
+  .ghost-input {
+    @apply w-full bg-transparent border border-border rounded-subtle px-4 py-3 
+           text-text-primary placeholder-text-muted text-sm
+           focus:border-text-secondary focus:outline-none focus:ring-0
+           transition-colors;
+  }
+  
+  .ghost-input:focus {
+    @apply border-text-secondary;
+  }
+
+  /* Ghost Button */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 
+           border border-border px-4 py-2 text-sm font-medium text-text-secondary
+           hover:bg-white hover:text-black hover:border-white
+           transition-all rounded-subtle;
+  }
+  
+  /* Primary Button */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+           bg-accent text-white px-4 py-2 text-sm font-medium rounded-subtle
+           hover:bg-accent-hover transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  /* Secondary Button */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+           bg-transparent border border-border text-text-primary px-4 py-2 text-sm font-medium
+           hover:bg-surface-hover transition-colors rounded-subtle
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Navigation Link */
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 text-text-secondary text-sm
+           hover:text-text-primary hover:bg-surface-hover 
+           rounded-subtle transition-colors cursor-pointer;
+  }
+  
+  .nav-link-active {
+    @apply text-text-primary bg-surface-active;
+  }
+
+  /* Stat Ribbon */
+  .stat-ribbon {
+    @apply flex flex-wrap items-stretch;
+  }
+  
+  .stat-item {
+    @apply flex flex-col items-center px-6 py-3 border-r border-border last:border-r-0;
+  }
+  
+  .stat-label {
+    @apply text-xs font-semibold tracking-wider uppercase text-text-muted;
+  }
+  
+  .stat-value {
+    @apply text-xl font-mono font-semibold text-text-primary mt-1;
+  }
+
+  /* Status Indicator */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  
+  .status-dot-success {
+    @apply bg-success;
+  }
+  
+  .status-dot-warning {
+    @apply bg-warning;
+  }
+  
+  .status-dot-error {
+    @apply bg-error;
+  }
+
+  /* Skeleton Loader */
+  .skeleton {
+    @apply bg-gradient-to-r from-surface via-surface-hover to-surface bg-[length:400%_100%] animate-skeleton rounded;
+  }
+
+  /* Section Header */
+  .section-title {
+    @apply text-xs font-semibold tracking-wider uppercase text-text-muted mb-4;
+  }
+
+  /* Data Tag */
+  .data-tag {
+    @apply inline-flex items-center px-2 py-1 text-xs font-mono 
+           bg-surface-hover text-text-secondary border border-border rounded;
+  }
+
+  /* Command Palette Trigger */
+  .cmd-trigger {
+    @apply flex items-center gap-2 px-3 py-1.5 text-sm text-text-muted
+           bg-surface border border-border rounded-subtle
+           hover:border-border-hover hover:text-text-secondary transition-colors cursor-pointer;
+  }
+  
+  .kbd {
+    @apply inline-flex items-center justify-center px-1.5 py-0.5 
+           text-xs font-mono text-text-muted bg-surface-active border border-border rounded;
+  }
+
+  /* Breadcrumb */
+  .breadcrumb {
+    @apply flex items-center gap-2 text-sm;
+  }
+  
+  .breadcrumb-item {
+    @apply text-text-muted hover:text-text-primary transition-colors;
+  }
+  
+  .breadcrumb-separator {
+    @apply text-text-faint;
+  }
+  
+  .breadcrumb-current {
+    @apply text-text-primary font-medium;
+  }
+
+  /* Slider Input */
+  .slider-input {
+    @apply w-full h-1.5 appearance-none cursor-pointer rounded-full;
+  }
+  
+  .slider-input::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full bg-white border-2 border-accent cursor-pointer;
+    margin-top: -5px;
+  }
+  
+  .slider-input::-moz-range-thumb {
+    @apply w-4 h-4 rounded-full bg-white border-2 border-accent cursor-pointer border-0;
+  }
+  
+  .slider-input::-webkit-slider-runnable-track {
+    @apply w-full h-1.5 rounded-full;
+  }
+  
+  .slider-input::-moz-range-track {
+    @apply w-full h-1.5 rounded-full bg-border;
   }
 }
 
 @layer utilities {
-  .GlassCard {
-    background: #1a4a52;
-    border: 1px solid #4F7C82;
-    border-radius: 16px;
-    box-shadow: 0 4px 16px rgba(11, 46, 51, 0.5);
+  /* Monospace for data */
+  .font-data {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
   }
   
-  .gradient-text {
-    background: linear-gradient(135deg, #B8E3E9 0%, #D4A574 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+  /* Divider line */
+  .divider {
+    @apply border-t border-border;
+  }
+  
+  .divider-vertical {
+    @apply border-l border-border h-full;
   }
 
-  .text-glow {
-    text-shadow: 0 0 20px rgba(184, 227, 233, 0.5);
-  }
-  
-  .btn-primary {
-    background: linear-gradient(135deg, #4F7C82 0%, #3a5e64 100%);
-    color: #FFFFFF;
-    border: 1px solid rgba(184, 227, 233, 0.4);
-    transition: all 0.3s ease;
-  }
-  
-  .btn-primary:hover {
-    background: linear-gradient(135deg, #5a8b93 0%, #4F7C82 100%);
-    border-color: #B8E3E9;
-    box-shadow: 0 4px 20px rgba(184, 227, 233, 0.4);
-  }
-  
-  .btn-secondary {
-    background: transparent;
-    color: #B8E3E9;
-    border: 2px solid #4F7C82;
-  }
-  
-  .btn-secondary:hover {
-    background: rgba(79, 124, 130, 0.2);
-    border-color: #B8E3E9;
-  }
-  
-  .btn-warm {
-    background: linear-gradient(135deg, #D4A574 0%, #A67C52 100%);
-    color: #0B2E33;
-    border: 1px solid rgba(212, 165, 116, 0.5);
-  }
-  
-  .btn-warm:hover {
-    background: linear-gradient(135deg, #E8D4B8 0%, #D4A574 100%);
-    box-shadow: 0 4px 20px rgba(212, 165, 116, 0.3);
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-skeleton,
+    .animate-pulse-subtle {
+      animation: none;
+    }
   }
 }
 
-/* Custom scrollbar optimized for Winter Chill theme */
+/* === SCROLLBAR === */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B2E33;
+  background: #09090b;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(79, 124, 130, 0.5);
+  background: #27272a;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(79, 124, 130, 0.8);
+  background: #3f3f46;
 }
 
-/* Smooth transitions globally */
+/* === CODE BLOCKS === */
+pre {
+  @apply bg-bg-zinc border border-border rounded-card p-4 overflow-x-auto;
+}
+
+code {
+  @apply font-mono text-sm bg-surface-hover text-text-secondary px-1.5 py-0.5 rounded;
+}
+
+pre code {
+  @apply bg-transparent p-0;
+}
+
+/* === TRANSITIONS === */
 * {
-  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, box-shadow, transform;
+  transition-property: color, background-color, border-color, opacity;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 250ms;
+  transition-duration: 150ms;
 }
 
-/* Prevent transitions on things like scroll offset animations if we want instant changes */
+/* Opt out of transitions when needed */
 .no-transition {
   transition: none !important;
 }
 
-/* Blob Canvas behind hero */
-.blob-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  z-index: -1;
-  pointer-events: none;
-}
-
-.blob {
-  position: absolute;
-  filter: blur(80px);
-  opacity: 0.15;
-  border-radius: 50%;
-  animation: blob 10s infinite;
-}
-
-.blob-1 {
-  top: 10%;
-  left: 20%;
-  width: 500px;
-  height: 500px;
-  background: var(--color-accent);
-}
-
-.blob-2 {
-  top: 40%;
-  right: 15%;
-  width: 400px;
-  height: 400px;
-  background: var(--color-cyan);
-  animation-delay: 2s;
-}
-
-/* Code block styling for dark mode panels */
-pre {
-  background-color: rgba(0, 0, 0, 0.4) !important;
-  color: var(--color-text-muted) !important;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1rem;
-  overflow-x: auto;
-}
-
-code {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: var(--color-text);
-  padding: 0.2rem 0.4rem;
-  border-radius: 4px;
-  font-family: 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace';
-  font-size: 0.875rem;
-}
-
-pre code {
-  background-color: transparent;
-  color: inherit;
-  padding: 0;
+/* === FOCUS STATES === */
+:focus-visible {
+  @apply outline-none ring-1 ring-accent ring-offset-1 ring-offset-black;
 }
