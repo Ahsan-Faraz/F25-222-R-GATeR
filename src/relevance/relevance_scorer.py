@@ -4,6 +4,7 @@ Implements the complete KGCompass relevance scoring formula
 """
 
 import logging
+import math
 import numpy as np
 import networkx as nx
 from typing import Dict, List, Tuple, Optional, Union
@@ -148,6 +149,16 @@ class RelevanceScorer:
                           (1 - self.alpha) * textual_similarity)
         total_score = path_decay_factor * similarity_score
         
+        # Ensure all scores are valid floats (not NaN or Inf)
+        if math.isnan(total_score) or math.isinf(total_score):
+            total_score = 0.0
+        if math.isnan(semantic_similarity) or math.isinf(semantic_similarity):
+            semantic_similarity = 0.0
+        if math.isnan(textual_similarity) or math.isinf(textual_similarity):
+            textual_similarity = 0.0
+        if math.isnan(path_decay_factor) or math.isinf(path_decay_factor):
+            path_decay_factor = 0.0
+        
         # Get detailed path information
         path_info = self.path_calculator.get_path_info(graph, path)
         
@@ -163,11 +174,11 @@ class RelevanceScorer:
             entity_id=entity_id,
             entity_name=entity_name,
             entity_type=entity_type,
-            total_score=total_score,
-            semantic_similarity=semantic_similarity,
-            textual_similarity=textual_similarity,
-            path_length=path_length,
-            path_decay_factor=path_decay_factor,
+            total_score=float(total_score),
+            semantic_similarity=float(semantic_similarity),
+            textual_similarity=float(textual_similarity),
+            path_length=float(path_length),
+            path_decay_factor=float(path_decay_factor),
             path_info=path_info,
             file_path=candidate_entity.get('file_path', '')
         )
@@ -302,7 +313,12 @@ class RelevanceScorer:
             embedding1 = self.embedding_generator.generate_embedding(text1)
             embedding2 = self.embedding_generator.generate_embedding(text2)
             
-            return self.embedding_generator.compute_cosine_similarity(embedding1, embedding2)
+            similarity = self.embedding_generator.compute_cosine_similarity(embedding1, embedding2)
+            
+            # Ensure valid float result
+            if similarity is None or math.isnan(similarity) or math.isinf(similarity):
+                return 0.0
+            return float(max(0.0, min(1.0, similarity)))  # Clamp to [0, 1]
             
         except Exception as e:
             self.logger.warning(f"Error calculating semantic similarity: {e}")
@@ -332,7 +348,12 @@ class RelevanceScorer:
 
             inter = len(tokens1 & tokens2)
             union = len(tokens1 | tokens2)
-            return float(inter / union) if union else 0.0
+            result = float(inter / union) if union else 0.0
+            
+            # Ensure valid float result
+            if math.isnan(result) or math.isinf(result):
+                return 0.0
+            return float(max(0.0, min(1.0, result)))  # Clamp to [0, 1]
 
         except Exception as e:
             self.logger.warning(f"Error calculating textual similarity: {e}")

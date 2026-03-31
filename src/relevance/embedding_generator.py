@@ -275,8 +275,12 @@ class EmbeddingGenerator:
         # Compute cosine similarity
         similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
         
+        # Handle potential NaN from numerical issues
+        if np.isnan(similarity) or np.isinf(similarity):
+            return 0.0
+        
         # Ensure result is in [0, 1] range (convert from [-1, 1])
-        return max(0.0, (similarity + 1.0) / 2.0)
+        return float(max(0.0, min(1.0, (similarity + 1.0) / 2.0)))
     
     def prepare_code_entity_text(self, entity: Dict) -> str:
         """

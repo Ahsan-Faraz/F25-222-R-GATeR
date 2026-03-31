@@ -878,7 +878,8 @@ def calculate_kgcompass_relevance():
                         'entity_id': candidate.entity_id,
                         'entity_name': candidate.entity_name,
                         'entity_type': candidate.entity_type,
-                        'score': candidate.total_score,
+                        'score': candidate.total_score,  # Frontend expects 'score'
+                        'total_score': candidate.total_score,  # Keep original for backward compatibility
                         'semantic_similarity': candidate.semantic_similarity,
                         'textual_similarity': candidate.textual_similarity,
                         'path_length': candidate.path_length,
@@ -889,8 +890,14 @@ def calculate_kgcompass_relevance():
                     # Debug: Log the score value
                     logger.debug(f"Entity {candidate.entity_name}: total_score={candidate.total_score}, type={type(candidate.total_score)}")
                 else:
-                    # It's already a dictionary
-                    formatted_candidate = candidate
+                    # It's already a dictionary - create a copy to avoid modifying original
+                    formatted_candidate = dict(candidate)
+                    # Ensure both 'score' and 'total_score' are present for compatibility
+                    if 'total_score' in formatted_candidate:
+                        formatted_candidate['score'] = formatted_candidate['total_score']
+                    elif 'score' in formatted_candidate:
+                        formatted_candidate['total_score'] = formatted_candidate['score']
+                    logger.debug(f"Dictionary candidate: score={formatted_candidate.get('score')}, total_score={formatted_candidate.get('total_score')}")
                 
                 # Convert numpy types to Python types for JSON serialization
                 formatted_candidate = convert_numpy_types(formatted_candidate)

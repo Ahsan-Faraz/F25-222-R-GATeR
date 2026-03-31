@@ -20,11 +20,11 @@ export default function GlassCard({ children, className, glowOnHover, ...props }
         "GlassCard relative overflow-hidden",
         className
       )}
-      whileHover={glowOnHover ? { y: -4, boxShadow: '0 0 48px rgba(184,227,233,0.3)' } : undefined}
+      whileHover={glowOnHover ? { y: -4, boxShadow: '0 0 48px rgba(79,124,130,0.4)' } : undefined}
       {...props}
     >
-      {/* Optional subtle inner border highlight via pseudo-element or absolute div */}
-      <div className="absolute inset-0 border border-[rgba(184,227,233,0.1)] rounded-2xl pointer-events-none" />
+      {/* Inner border highlight */}
+      <div className="absolute inset-0 border border-[#4F7C82]/30 rounded-2xl pointer-events-none" />
       {children}
     </motion.div>
   );

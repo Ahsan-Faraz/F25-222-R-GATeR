@@ -14,7 +14,7 @@ export default function Header() {
   }
 
   return (
-    <header className="bg-gradient-to-r from-[#0B2E33] via-[#1a4a52] to-[#0B2E33] backdrop-blur-md border-b border-[rgba(212,165,116,0.3)] sticky top-0 z-50 shadow-lg">
+    <header className="bg-gradient-to-r from-[#0B2E33] via-[#16424a] to-[#0B2E33] border-b-2 border-[#4F7C82] sticky top-0 z-50 shadow-lg">
       <div className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -28,7 +28,7 @@ export default function Header() {
 
           <div className="flex items-center gap-6">
             {session.user && (
-              <div className="flex items-center gap-3 bg-[rgba(79,124,130,0.4)] pl-2 pr-4 py-1.5 rounded-full border border-[rgba(184,227,233,0.25)]">
+              <div className="flex items-center gap-3 bg-[#1a4a52] pl-2 pr-4 py-1.5 rounded-full border border-[#4F7C82]">
                 {session.user.image ? (
                   <img
                     src={session.user.image}

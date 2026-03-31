@@ -95,10 +95,10 @@ export default function LoginPage() {
             {features.map((feature, index) => {
               const Icon = feature.icon;
               const colors = [
-                { bg: 'rgba(79,124,130,0.2)', border: 'rgba(184,227,233,0.3)', icon: '#B8E3E9' },
-                { bg: 'rgba(212,165,116,0.2)', border: 'rgba(212,165,116,0.3)', icon: '#D4A574' },
-                { bg: 'rgba(79,124,130,0.15)', border: 'rgba(184,227,233,0.25)', icon: '#93B1B5' },
-                { bg: 'rgba(212,165,116,0.15)', border: 'rgba(232,212,184,0.25)', icon: '#E8D4B8' }
+                { bg: '#1a4a52', border: '#4F7C82', icon: '#B8E3E9' },
+                { bg: '#2a3f36', border: '#A67C52', icon: '#D4A574' },
+                { bg: '#16424a', border: '#4F7C82', icon: '#93B1B5' },
+                { bg: '#2a3530', border: '#D4A574', icon: '#E8D4B8' }
               ];
               const color = colors[index % 4];
               
@@ -108,7 +108,7 @@ export default function LoginPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: index * 0.1 }}
-                  className="rounded-xl p-4 backdrop-blur-md"
+                  className="rounded-xl p-4"
                   style={{ 
                     background: color.bg,
                     border: `1px solid ${color.border}`

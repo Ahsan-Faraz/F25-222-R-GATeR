@@ -1,103 +1,105 @@
 // GATR Test Repair Panel
 
 import React, { useState, useEffect } from 'react';
-import { repairTest, getRepairStatus, getRepairResults, getTestContext } from '@/lib/api/gatr';
+import { repairTest, getGATRStatus, getTestContext } from '@/lib/api/gatr';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import DiffViewer from '../ui/DiffViewer';
-import { Wrench, SearchCode, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Wrench, SearchCode, Loader2, CheckCircle2, XCircle, AlertTriangle, Server } from 'lucide-react';
 
 interface RepairState {
-  jobId: string | null;
-  status: string;
-  currentStep: number;
+  repairId: string | null;
+  status: 'idle' | 'processing' | 'completed' | 'failed';
   message: string;
   result: any;
+}
+
+interface GATREngineStatus {
+  available: boolean;
+  llm?: {
+    available: boolean;
+    model?: string;
+    provider?: string;
+    error?: string;
+  };
+  databases?: {
+    kuzu?: { connected: boolean; entities?: number };
+    lancedb?: { connected: boolean; embeddings?: number };
+  };
 }
 
 export default function GATRPanel() {
   const [testCode, setTestCode] = useState('');
   const [testName, setTestName] = useState('');
   const [testFile, setTestFile] = useState('');
-  const [confidenceThreshold, setConfidenceThreshold] = useState(0.7);
-  const [topKContext, setTopKContext] = useState(5);
+  const [testClass, setTestClass] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');  // REQUIRED field
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [engineStatus, setEngineStatus] = useState<GATREngineStatus | null>(null);
   const [repairState, setRepairState] = useState<RepairState>({
-    jobId: null,
+    repairId: null,
     status: 'idle',
-    currentStep: 0,
     message: '',
     result: null,
   });
   const [context, setContext] = useState<any>(null);
 
+  // Fetch GATR engine status on mount
   useEffect(() => {
-    if (repairState.jobId && repairState.status === 'processing') {
-      const interval = setInterval(async () => {
-        try {
-          const status = await getRepairStatus(repairState.jobId!);
-          setRepairState(prev => ({
-            ...prev,
-            status: status.status,
-            currentStep: status.current_step,
-            message: status.message,
-          }));
+    const fetchStatus = async () => {
+      try {
+        const status = await getGATRStatus();
+        setEngineStatus(status);
+      } catch (err) {
+        console.error('Failed to fetch GATR status:', err);
+        setEngineStatus({ available: false });
+      }
+    };
+    fetchStatus();
+  }, []);
 
-          if (status.status === 'completed') {
-            const results = await getRepairResults(repairState.jobId!);
-            setRepairState(prev => ({
-              ...prev,
-              result: results,
-            }));
-            clearInterval(interval);
-          } else if (status.status === 'failed') {
-            clearInterval(interval);
-          }
-        } catch (err) {
-          console.error('Failed to poll status:', err);
-        }
-      }, 1000);
-
-      return () => clearInterval(interval);
-    }
-  }, [repairState.jobId, repairState.status]);
-
+  // Backend API is SYNCHRONOUS - no polling needed
   const handleRepair = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!testCode.trim()) {
       setError('Please enter test code');
       return;
     }
+    if (!errorMessage.trim()) {
+      setError('Please enter the error message from the failing test');
+      return;
+    }
 
     setLoading(true);
     setError(null);
     setRepairState({
-      jobId: null,
+      repairId: null,
       status: 'processing',
-      currentStep: 0,
-      message: 'Starting repair...',
+      message: 'Sending repair request...',
       result: null,
     });
 
     try {
-      const job = await repairTest({
+      // Repair is SYNCHRONOUS - result comes back immediately
+      const result = await repairTest({
         test_code: testCode,
         test_name: testName || 'unknown_test',
-        test_file: testFile || 'test.py',
-        confidence_threshold: confidenceThreshold,
-        top_k_context: topKContext,
+        test_file: testFile || '',
+        test_class: testClass || '',
+        error_message: errorMessage,
+        include_debug_trace: true,
       });
 
-      setRepairState(prev => ({
-        ...prev,
-        jobId: job.job_id,
-        status: job.status,
-        message: job.message,
-      }));
+      setRepairState({
+        repairId: result.repair_id,
+        status: result.success ? 'completed' : 'failed',
+        message: result.success ? 'Repair completed!' : (result.error || 'Repair failed'),
+        result: result,
+      });
     } catch (err: any) {
       setError(err.message || 'Repair failed');
-      setRepairState(prev => ({ ...prev, status: 'failed' }));
+      setRepairState(prev => ({ ...prev, status: 'failed', message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -114,9 +116,12 @@ export default function GATRPanel() {
     try {
       const ctx = await getTestContext({
         test_code: testCode,
-        top_k: topKContext,
+        test_name: testName || 'unknown_test',
+        error_message: errorMessage || 'Test failure',
+        test_file: testFile,
+        test_class: testClass,
       });
-      setContext(ctx);
+      setContext(ctx.context || ctx);
     } catch (err: any) {
       setError(err.message || 'Failed to get context');
     } finally {
@@ -126,9 +131,8 @@ export default function GATRPanel() {
 
   const resetRepair = () => {
     setRepairState({
-      jobId: null,
+      repairId: null,
       status: 'idle',
-      currentStep: 0,
       message: '',
       result: null,
     });
@@ -136,12 +140,63 @@ export default function GATRPanel() {
     setError(null);
   };
 
+  const llmAvailable = engineStatus?.llm?.available;
+  const llmError = engineStatus?.llm?.error;
+
   return (
     <div className="space-y-6">
+      {/* Engine Status Card */}
+      {engineStatus && (
+        <Card title="GATR Engine Status">
+          <div className="flex flex-wrap gap-4">
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${engineStatus.available ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+              <Server className="w-4 h-4" />
+              <span className="text-sm font-medium">
+                Engine: {engineStatus.available ? 'Available' : 'Unavailable'}
+              </span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${llmAvailable ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+              <span className="text-sm font-medium">
+                LLM: {llmAvailable ? `${engineStatus.llm?.model || 'Ready'}` : 'Not Available'}
+              </span>
+              {llmError && <span className="text-xs">({llmError})</span>}
+            </div>
+            {engineStatus.databases?.kuzu && (
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${engineStatus.databases.kuzu.connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                <span className="text-sm font-medium">
+                  KUZU: {engineStatus.databases.kuzu.connected ? `${engineStatus.databases.kuzu.entities || 0} entities` : 'Disconnected'}
+                </span>
+              </div>
+            )}
+            {engineStatus.databases?.lancedb && (
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${engineStatus.databases.lancedb.connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                <span className="text-sm font-medium">
+                  LanceDB: {engineStatus.databases.lancedb.connected ? `${engineStatus.databases.lancedb.embeddings || 0} embeddings` : 'Disconnected'}
+                </span>
+              </div>
+            )}
+          </div>
+          {!llmAvailable && (
+            <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+              <div className="flex items-start gap-2 text-amber-400">
+                <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">LLM Not Available</p>
+                  <p className="text-sm text-amber-300/70 mt-1">
+                    Test repair requires an LLM. Please start LM Studio or Ollama with the configured model.
+                    Provider: {engineStatus.llm?.provider || 'lm_studio'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card title="GATR - Test Repair">
         <div className="space-y-4">
-          <p className="text-[var(--color-text-muted)] text-sm mb-4">
-            Paste your failing test code below to get AI-powered repair suggestions using RAG context.
+          <p className="text-[#B8E3E9] text-sm mb-4">
+            Paste your failing test code and error message below to get AI-powered repair suggestions using RAG context.
           </p>
 
           <form onSubmit={handleRepair} className="space-y-4">
@@ -155,7 +210,7 @@ export default function GATRPanel() {
                   value={testName}
                   onChange={(e) => setTestName(e.target.value)}
                   placeholder="test_function_name"
-                  className="w-full px-3 py-2 bg-black/40 border border-white/20 text-white rounded-lg focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent outline-none placeholder:text-white/20"
+                  className="w-full px-3 py-2 bg-[rgba(30,66,74,0.5)] border-2 border-[rgba(184,227,233,0.3)] text-[#E8F4F6] rounded-lg focus:ring-2 focus:ring-[#B8E3E9] focus:border-transparent outline-none placeholder:text-[rgba(147,177,181,0.6)]"
                 />
               </div>
               <div>
@@ -167,60 +222,67 @@ export default function GATRPanel() {
                   value={testFile}
                   onChange={(e) => setTestFile(e.target.value)}
                   placeholder="tests/test_example.py"
-                  className="w-full px-3 py-2 bg-black/40 border border-white/20 text-white rounded-lg focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent outline-none placeholder:text-white/20"
+                  className="w-full px-3 py-2 bg-[rgba(30,66,74,0.5)] border-2 border-[rgba(184,227,233,0.3)] text-[#E8F4F6] rounded-lg focus:ring-2 focus:ring-[#B8E3E9] focus:border-transparent outline-none placeholder:text-[rgba(147,177,181,0.6)]"
                 />
               </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-white mb-2">
-                Test Code (Paste your failing test)
+                Test Class (Optional)
+              </label>
+              <input
+                type="text"
+                value={testClass}
+                onChange={(e) => setTestClass(e.target.value)}
+                placeholder="TestClassName"
+                className="w-full px-3 py-2 bg-[rgba(30,66,74,0.5)] border-2 border-[rgba(184,227,233,0.3)] text-[#E8F4F6] rounded-lg focus:ring-2 focus:ring-[#B8E3E9] focus:border-transparent outline-none placeholder:text-[rgba(147,177,181,0.6)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">
+                Test Code <span className="text-red-400">*</span>
               </label>
               <textarea
                 value={testCode}
                 onChange={(e) => setTestCode(e.target.value)}
                 placeholder={`def test_example():\n    result = my_function(arg1, arg2)\n    assert result == expected_value`}
-                className="w-full px-4 py-3 bg-[#0A0A0E] border border-white/10 text-emerald-400 rounded-xl focus:ring-2 focus:ring-[var(--color-accent)] font-mono text-sm resize-y"
-                rows={10}
+                className="w-full px-4 py-3 bg-[#0B2E33] border-2 border-[rgba(184,227,233,0.3)] text-emerald-400 rounded-xl focus:ring-2 focus:ring-[#B8E3E9] font-mono text-sm resize-y placeholder:text-[rgba(147,177,181,0.4)]"
+                rows={8}
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4 bg-white/5 p-4 rounded-xl border border-white/5">
-              <div>
-                <label className="block text-xs font-bold text-[var(--color-accent)] mb-2 uppercase tracking-wider">
-                  Confidence Threshold: {confidenceThreshold}
-                </label>
-                <input
-                  type="range"
-                  value={confidenceThreshold}
-                  onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
-                  min={0.1}
-                  max={1}
-                  step={0.1}
-                  className="w-full accent-[var(--color-accent)]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-[var(--color-cyan)] mb-2 uppercase tracking-wider">
-                  Top K Context: {topKContext}
-                </label>
-                <input
-                  type="range"
-                  value={topKContext}
-                  onChange={(e) => setTopKContext(parseInt(e.target.value))}
-                  min={1}
-                  max={20}
-                  step={1}
-                  className="w-full accent-[var(--color-cyan)]"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">
+                Error Message <span className="text-red-400">*</span>
+                <span className="text-[#93B1B5] text-xs ml-2">(The failure output from running the test)</span>
+              </label>
+              <textarea
+                value={errorMessage}
+                onChange={(e) => setErrorMessage(e.target.value)}
+                placeholder={`AssertionError: Expected 42 but got 0\n\nTraceback (most recent call last):\n  File "test_example.py", line 10, in test_example\n    assert result == 42`}
+                className="w-full px-4 py-3 bg-[#0B2E33] border-2 border-[rgba(184,227,233,0.3)] text-red-400 rounded-xl focus:ring-2 focus:ring-[#B8E3E9] font-mono text-sm resize-y placeholder:text-[rgba(147,177,181,0.4)]"
+                rows={5}
+              />
             </div>
 
             <div className="flex gap-3 pt-4">
-              <Button type="submit" loading={loading} disabled={repairState.status === 'processing'} className="gap-2">
+              <Button 
+                type="submit" 
+                loading={loading} 
+                disabled={repairState.status === 'processing' || !engineStatus?.available} 
+                className="gap-2"
+              >
                 <Wrench className="w-4 h-4" /> Repair Test
               </Button>
-              <Button type="button" onClick={handleGetContext} variant="secondary" disabled={loading} className="gap-2">
+              <Button 
+                type="button" 
+                onClick={handleGetContext} 
+                variant="secondary" 
+                disabled={loading || !engineStatus?.available} 
+                className="gap-2"
+              >
                 <SearchCode className="w-4 h-4" /> Get Context Only
               </Button>
               {repairState.status !== 'idle' && (
@@ -242,20 +304,14 @@ export default function GATRPanel() {
       </Card>
 
       {repairState.status === 'processing' && (
-        <Card title="Repair Progress">
+        <Card title="Repair in Progress">
           <div className="space-y-4">
             <div className="flex items-center gap-4">
-              <Loader2 className="animate-spin text-[var(--color-cyan)] w-8 h-8" />
+              <Loader2 className="animate-spin text-[#B8E3E9] w-8 h-8" />
               <div>
                 <div className="font-medium text-white">{repairState.message}</div>
-                <div className="text-sm text-[var(--color-text-faint)] mt-1 tracking-wider uppercase">Step {repairState.currentStep}/9</div>
+                <div className="text-sm text-[#93B1B5] mt-1">This may take a minute depending on LLM response time...</div>
               </div>
-            </div>
-            <div className="w-full bg-black/50 rounded-full h-1.5 border border-white/5">
-              <div
-                className="bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-cyan)] h-1.5 rounded-full transition-all duration-500"
-                style={{ width: `${(repairState.currentStep / 9) * 100}%` }}
-              />
             </div>
           </div>
         </Card>
@@ -264,11 +320,53 @@ export default function GATRPanel() {
       {context && (
         <Card title="Retrieved Context">
           <div className="space-y-4">
-            <div className="text-sm text-[var(--color-cyan)] px-2 py-1 bg-[var(--color-cyan)]/10 rounded inline-block border border-[var(--color-cyan)]/20">
-              Found {context.retrieved_entities?.length || 0} relevant entities
+            <div className="text-sm text-[#B8E3E9] px-2 py-1 bg-[rgba(184,227,233,0.1)] rounded inline-block border border-[rgba(184,227,233,0.2)]">
+              Context retrieved successfully
             </div>
+            
+            {/* KG Entities */}
+            {context.kg_entities && context.kg_entities.length > 0 && (
+              <div>
+                <h5 className="font-medium text-white mb-2">Knowledge Graph Entities ({context.kg_entities.length})</h5>
+                <div className="space-y-2">
+                  {context.kg_entities.slice(0, 5).map((entity: any, i: number) => (
+                    <div key={i} className="bg-[rgba(30,66,74,0.5)] p-3 rounded-lg border border-[rgba(184,227,233,0.2)]">
+                      <div className="font-medium text-[#B8E3E9]">{entity.name || entity.id}</div>
+                      <div className="text-xs text-[#93B1B5]">{entity.type} • {entity.file}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Vector Results */}
+            {context.vector_results && context.vector_results.length > 0 && (
+              <div>
+                <h5 className="font-medium text-white mb-2">Vector Search Results ({context.vector_results.length})</h5>
+                <div className="space-y-2">
+                  {context.vector_results.slice(0, 5).map((result: any, i: number) => (
+                    <div key={i} className="bg-[rgba(30,66,74,0.5)] p-3 rounded-lg border border-[rgba(184,227,233,0.2)]">
+                      <div className="font-medium text-[#B8E3E9]">{result.name || result.id}</div>
+                      <div className="text-xs text-[#93B1B5]">Score: {(result.score || result._distance || 0).toFixed(3)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Compressed Context */}
+            {context.compressed_context && (
+              <div>
+                <h5 className="font-medium text-white mb-2">Compressed Context</h5>
+                <pre className="text-xs bg-[#0B2E33] border border-[rgba(184,227,233,0.2)] text-emerald-400 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap">
+                  {context.compressed_context}
+                </pre>
+              </div>
+            )}
+
+            {/* Raw code snippets fallback */}
             {context.code_snippets?.map((snippet: string, i: number) => (
-              <pre key={i} className="text-xs bg-[#0A0A0E] border border-white/5 text-emerald-400 p-4 rounded-lg overflow-x-auto">
+              <pre key={i} className="text-xs bg-[#0B2E33] border border-[rgba(184,227,233,0.2)] text-emerald-400 p-4 rounded-lg overflow-x-auto">
                 {snippet}
               </pre>
             ))}
@@ -284,46 +382,90 @@ export default function GATRPanel() {
                 <div className="flex items-center gap-3 text-emerald-400">
                   <CheckCircle2 className="w-8 h-8" />
                   <span className="font-display font-bold text-xl tracking-wide">Repair Successful</span>
-                  {repairState.result.confidence && (
+                  {repairState.result.confidence != null && (
                     <span className="text-xs bg-emerald-500/20 border border-emerald-500/30 px-2 py-1 rounded ml-2 font-mono">
                       {(repairState.result.confidence * 100).toFixed(1)}% confidence
                     </span>
                   )}
+                  {repairState.result.repair_strategy && (
+                    <span className="text-xs bg-blue-500/20 border border-blue-500/30 px-2 py-1 rounded text-blue-400 font-mono">
+                      {repairState.result.repair_strategy}
+                    </span>
+                  )}
                 </div>
 
-                {repairState.result.explanation && (
-                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-                    <h5 className="font-bold text-blue-400 mb-2 uppercase tracking-wide text-xs">Explanation:</h5>
-                    <p className="text-blue-100/80 text-sm leading-relaxed">{repairState.result.explanation}</p>
+                {/* Repair Method Info */}
+                {repairState.result.repair_method && (
+                  <div className="bg-[rgba(30,66,74,0.5)] border border-[rgba(184,227,233,0.2)] rounded-lg p-4">
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-[#93B1B5]">Method:</span>
+                      <span className="text-white font-medium">{repairState.result.repair_method}</span>
+                      {repairState.result.llm_used && (
+                        <span className="text-xs bg-purple-500/20 border border-purple-500/30 px-2 py-1 rounded text-purple-400">
+                          LLM Used
+                        </span>
+                      )}
+                      {repairState.result.processing_time && (
+                        <span className="text-[#93B1B5] ml-auto">
+                          Processing time: {repairState.result.processing_time.toFixed(2)}s
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
 
+                {/* Context Summary */}
+                {repairState.result.context_summary && (
+                  <div className="bg-[rgba(30,66,74,0.5)] border border-[rgba(184,227,233,0.2)] rounded-lg p-4">
+                    <h5 className="font-bold text-[#B8E3E9] mb-2 uppercase tracking-wide text-xs">Context Summary</h5>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      {Object.entries(repairState.result.context_summary).map(([key, value]) => (
+                        <div key={key}>
+                          <span className="text-[#93B1B5]">{key.replace(/_/g, ' ')}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Repaired Code */}
                 {repairState.result.repaired_code && (
                   <div>
                     <h5 className="font-bold text-white mb-3 tracking-wide uppercase text-xs">Repaired Code:</h5>
-                    <pre className="text-sm bg-[#0A0A0E] text-emerald-400 p-4 rounded-lg overflow-x-auto border border-emerald-500/20">
+                    <pre className="text-sm bg-[#0B2E33] text-emerald-400 p-4 rounded-lg overflow-x-auto border border-emerald-500/20">
                       {repairState.result.repaired_code}
                     </pre>
                   </div>
                 )}
 
-                {repairState.result.original_code && repairState.result.repaired_code && (
-                  <div className="border border-white/10 rounded-lg overflow-hidden relative">
-                     <DiffViewer
-                        original={repairState.result.original_code}
-                        modified={repairState.result.repaired_code}
+                {/* Diff Content */}
+                {repairState.result.diff_content && (
+                  <div>
+                    <h5 className="font-bold text-white mb-3 tracking-wide uppercase text-xs">Diff:</h5>
+                    <div className="border border-[rgba(184,227,233,0.2)] rounded-lg overflow-hidden">
+                      <DiffViewer
+                        original={testCode}
+                        modified={repairState.result.repaired_code || ''}
                       />
+                    </div>
                   </div>
                 )}
 
-                {repairState.result.changes && repairState.result.changes.length > 0 && (
-                  <div className="bg-white/5 p-4 rounded-lg border border-white/10">
-                    <h5 className="font-bold text-white mb-3 text-xs uppercase tracking-wider">Changes Made:</h5>
-                    <ul className="list-disc list-inside text-sm text-[var(--color-text-muted)] space-y-1">
-                      {repairState.result.changes.map((change: string, i: number) => (
-                        <li key={i}>{change}</li>
+                {/* Pipeline Progress (debug info) */}
+                {repairState.result.pipeline_progress && Object.keys(repairState.result.pipeline_progress).length > 0 && (
+                  <div className="bg-[rgba(30,66,74,0.3)] p-4 rounded-lg border border-[rgba(184,227,233,0.1)]">
+                    <h5 className="font-bold text-[#93B1B5] mb-3 text-xs uppercase tracking-wider">Pipeline Progress</h5>
+                    <div className="space-y-2 text-sm">
+                      {Object.entries(repairState.result.pipeline_progress).map(([step, info]: [string, any]) => (
+                        <div key={step} className="flex justify-between items-center">
+                          <span className="text-[#B8E3E9]">{step}</span>
+                          <span className={`text-xs px-2 py-1 rounded ${info.success ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {info.success ? 'Success' : 'Failed'}
+                          </span>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </div>
                 )}
               </>

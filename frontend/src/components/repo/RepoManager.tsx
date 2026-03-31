@@ -206,7 +206,7 @@ export default function RepoManager() {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 placeholder="https://github.com/owner/repo or owner/repo"
-                className="w-full px-4 py-3 border-2 border-[rgba(184,227,233,0.3)] rounded-xl focus:ring-2 focus:ring-[#B8E3E9] focus:border-[#B8E3E9] transition-all bg-[rgba(30,66,74,0.5)] text-[#E8F4F6] placeholder-[rgba(147,177,181,0.6)]"
+                className="w-full px-4 py-3 border-2 border-[#4F7C82] rounded-xl focus:ring-2 focus:ring-[#B8E3E9] focus:border-[#B8E3E9] transition-all bg-[#0B2E33] text-[#E8F4F6] placeholder-[#93B1B5]/60"
                 disabled={loading || isAnalyzing}
               />
             </div>
@@ -218,7 +218,7 @@ export default function RepoManager() {
                 id="skipGithubArtifacts"
                 checked={skipGithubArtifacts}
                 onChange={(e) => setSkipGithubArtifacts(e.target.checked)}
-                className="w-4 h-4 text-[#4F7C82] bg-[rgba(30,66,74,0.5)] border-[rgba(184,227,233,0.3)] rounded focus:ring-[#B8E3E9]"
+                className="w-4 h-4 text-[#4F7C82] bg-[#0B2E33] border-[#4F7C82] rounded focus:ring-[#B8E3E9]"
                 disabled={loading || isAnalyzing}
               />
               <label htmlFor="skipGithubArtifacts" className="text-sm text-[#B8E3E9]">
@@ -233,7 +233,7 @@ export default function RepoManager() {
 
           {/* Current Repository Status */}
           {currentRepo && (
-            <div className="bg-[rgba(30,66,74,0.5)] rounded-xl p-5 border-2 border-[rgba(184,227,233,0.2)]">
+            <div className="bg-[#16424a] rounded-xl p-5 border-2 border-[#4F7C82]">
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <h4 className="font-bold text-lg text-white mb-1">Current Repository</h4>
@@ -242,7 +242,7 @@ export default function RepoManager() {
                   </p>
                   <p className="text-xs text-[#93B1B5] mt-1">{currentRepo.url}</p>
                 </div>
-                <span className="px-3 py-1 bg-[rgba(79,124,130,0.4)] text-[#B8E3E9] text-sm font-medium rounded-full border border-[rgba(184,227,233,0.3)]">
+                <span className="px-3 py-1 bg-[#2a4a42] text-[#B8E3E9] text-sm font-medium rounded-full border border-[#4F7C82]">
                   Active
                 </span>
               </div>
@@ -294,42 +294,42 @@ export default function RepoManager() {
         <Card title="Analysis Results">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {analysisResults.entities_extracted !== undefined && (
-              <div className="bg-blue-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold text-blue-600">
+              <div className="bg-[#1a4a52] p-4 rounded-lg text-center border border-[#4F7C82]">
+                <div className="text-2xl font-bold text-[#B8E3E9]">
                   {analysisResults.entities_extracted}
                 </div>
-                <div className="text-sm text-gray-600">Entities Extracted</div>
+                <div className="text-sm text-[#93B1B5]">Entities Extracted</div>
               </div>
             )}
             {analysisResults.relationships_detected !== undefined && (
-              <div className="bg-purple-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold text-purple-600">
+              <div className="bg-[#2a3f36] p-4 rounded-lg text-center border border-[#D4A574]">
+                <div className="text-2xl font-bold text-[#D4A574]">
                   {analysisResults.relationships_detected}
                 </div>
-                <div className="text-sm text-gray-600">Relationships</div>
+                <div className="text-sm text-[#E8D4B8]">Relationships</div>
               </div>
             )}
             {analysisResults.knowledge_graph?.nodes !== undefined && (
-              <div className="bg-green-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold text-green-600">
+              <div className="bg-[#16424a] p-4 rounded-lg text-center border border-[#4F7C82]">
+                <div className="text-2xl font-bold text-emerald-400">
                   {analysisResults.knowledge_graph.nodes}
                 </div>
-                <div className="text-sm text-gray-600">Graph Nodes</div>
+                <div className="text-sm text-[#93B1B5]">Graph Nodes</div>
               </div>
             )}
             {analysisResults.knowledge_graph?.edges !== undefined && (
-              <div className="bg-orange-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold text-orange-600">
+              <div className="bg-[#2a3530] p-4 rounded-lg text-center border border-[#A67C52]">
+                <div className="text-2xl font-bold text-[#E8D4B8]">
                   {analysisResults.knowledge_graph.edges}
                 </div>
-                <div className="text-sm text-gray-600">Graph Edges</div>
+                <div className="text-sm text-[#D4A574]">Graph Edges</div>
               </div>
             )}
           </div>
           
           {analysisResults.vector_sync && (
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-              <span className="text-sm text-gray-600">
+            <div className="mt-4 p-3 bg-[#16424a] rounded-lg border border-[#4F7C82]">
+              <span className="text-sm text-[#B8E3E9]">
                 Vector Sync: {analysisResults.vector_sync.success ? '✅' : '❌'} 
                 {analysisResults.vector_sync.vectors_synced !== undefined && 
                   ` - ${analysisResults.vector_sync.vectors_synced} vectors synced`}

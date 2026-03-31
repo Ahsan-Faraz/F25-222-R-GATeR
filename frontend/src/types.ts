@@ -204,46 +204,100 @@ export interface BrokenTestInfo {
   test_name: string;
   test_file: string;
   test_code: string;
-  error_message?: string;
-  error_type?: string;
+  test_class?: string;
+  error_message: string;  // REQUIRED by backend
 }
 
 export interface RepairJob {
-  job_id: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
-  current_step: number;
-  total_steps: number;
-  message: string;
+  // Legacy fields (not used by actual API)
+  job_id?: string;
+  status?: 'queued' | 'processing' | 'completed' | 'failed';
+  current_step?: number;
+  total_steps?: number;
+  message?: string;
   started_at?: string;
   completed_at?: string;
 }
 
 export interface PipelineStep {
-  step_number: number;
-  name: string;
-  description: string;
+  step_name: string;
+  step_number: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
-  started_at?: string;
-  completed_at?: string;
+  start_time?: number;
+  end_time?: number;
   duration?: number;
+  input_summary?: Record<string, any>;
+  output_summary?: Record<string, any>;
+  details?: Record<string, any>;
 }
 
 export interface RepairResult {
   success: boolean;
-  job_id: string;
+  repair_id: string;
+  test_name: string;
+  project_name?: string;
   repaired_code?: string;
-  original_code: string;
-  explanation?: string;
+  repair_strategy?: string;
+  llm_used?: boolean;
+  repair_method?: string;
   confidence?: number;
-  context_used?: CodeEntity[];
-  changes?: string[];
+  processing_time?: number;
+  context_summary?: Record<string, any>;
+  pipeline_progress?: Record<string, any>;
+  raw_context_details?: Record<string, any>;
+  compressed_context_details?: Record<string, any>;
+  aggregated_context_details?: Record<string, any>;
+  retrieval_trace?: Record<string, any>;
+  final_rag_prompt?: Record<string, any>;
+  diff_file_path?: string;
+  diff_content?: string;
   error?: string;
 }
 
 export interface ContextRetrieval {
-  retrieved_entities: CodeEntity[];
-  code_snippets: string[];
-  total_context_size: number;
+  success: boolean;
+  test_name: string;
+  context: {
+    kg_entities?: any[];
+    vector_results?: any[];
+    compressed_context?: string;
+    retrieved_entities?: any[];
+    code_snippets?: string[];
+    [key: string]: any;
+  };
+  error?: string;
+}
+
+export interface GATREngineStatus {
+  available: boolean;
+  kg_manager_available?: boolean;
+  vector_storage_available?: boolean;
+  relevance_scorer_available?: boolean;
+  total_repairs?: number;
+  successful_repairs?: number;
+  databases?: {
+    kuzu?: {
+      connected: boolean;
+      path?: string;
+      entities?: number;
+      edges?: number;
+    };
+    lancedb?: {
+      connected: boolean;
+      path?: string;
+      embeddings?: number;
+    };
+  };
+  llm?: {
+    provider?: string;
+    model?: string;
+    url?: string;
+    available?: boolean;
+    target_model_available?: boolean;
+    installed_models?: string[];
+    error?: string;
+  };
+  error?: string;
 }
 
 // ==================== Export ====================
