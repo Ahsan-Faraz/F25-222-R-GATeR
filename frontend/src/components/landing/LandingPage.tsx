@@ -76,26 +76,26 @@ const FeatureCard = ({ icon: Icon, title, description, badge, delay = 0 }: Featu
   <motion.div
     variants={fadeInUp}
     transition={{ duration: 0.8, ease: "easeOut", delay }}
-    className="group relative bg-zinc-950/50 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-8 hover:border-blue-500/50 transition-all duration-500 overflow-hidden"
+    className="group relative bg-zinc-950/50 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-8 hover:border-blue-600/50 transition-all duration-500 overflow-hidden"
     whileHover={{ scale: 1.02, y: -4 }}
   >
-    {/* Gradient overlay on hover */}
-    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+    {/* Gradient overlay on hover - more subtle */}
+    <div className="absolute inset-0 bg-gradient-to-br from-blue-600/5 to-zinc-700/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
     
     <div className="relative z-10">
       {/* Icon container */}
       <motion.div 
-        className="w-14 h-14 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-6"
+        className="w-14 h-14 bg-blue-600/10 border border-blue-600/20 rounded-xl flex items-center justify-center mb-6"
         whileHover={{ rotate: 360 }}
         transition={{ duration: 0.6 }}
       >
-        <Icon className="w-7 h-7 text-blue-500" />
+        <Icon className="w-7 h-7 text-blue-400" />
       </motion.div>
       
       {/* Title and badge */}
       <div className="flex items-start justify-between mb-4">
         <h3 className="text-xl font-bold text-white">{title}</h3>
-        <span className="px-3 py-1 bg-blue-500/10 text-blue-400 text-xs font-mono font-bold rounded-full border border-blue-500/20">
+        <span className="px-3 py-1 bg-blue-600/10 text-blue-400 text-xs font-mono font-bold rounded-full border border-blue-600/20">
           {badge}
         </span>
       </div>
@@ -113,38 +113,62 @@ interface PipelineNodeProps {
   icon: React.ElementType;
   description: string;
   isLast?: boolean;
+  isLeft?: boolean; // Alternates left/right
 }
 
-const PipelineNode = ({ step, title, icon: Icon, description, isLast }: PipelineNodeProps) => (
-  <motion.div
-    variants={fadeInUp}
-    transition={{ duration: 0.8, ease: "easeOut", delay: step * 0.1 }}
-    className="relative flex items-center gap-8"
-  >
-    {/* Connector line */}
-    {!isLast && (
-      <div className="absolute left-10 top-20 w-0.5 h-full bg-gradient-to-b from-blue-500 via-purple-500/50 to-transparent" />
-    )}
-    
-    {/* Node circle */}
+// Pipeline Node Component - Alternating Tree Structure
+const PipelineNode = ({ step, title, icon: Icon, description, isLast, isLeft }: PipelineNodeProps) => {
+  const ref = useRef(null);
+  const isInView = useInView(ref, { once: false, amount: 0.5 });
+  
+  return (
     <motion.div
-      className="relative z-10 w-20 h-20 bg-black border-4 border-blue-500 rounded-full flex items-center justify-center group hover:border-purple-500 transition-colors duration-300"
-      whileHover={{ scale: 1.15, rotate: 360 }}
-      transition={{ duration: 0.5 }}
+      ref={ref}
+      initial={{ opacity: 0, x: isLeft ? -30 : 30 }}
+      animate={isInView ? { opacity: 1, x: 0 } : { opacity: 0, x: isLeft ? -30 : 30 }}
+      transition={{ duration: 0.4, ease: "easeOut", delay: step * 0.08 }}
+      className={`relative flex items-center gap-4 ${isLeft ? 'flex-row' : 'flex-row-reverse'}`}
     >
-      <Icon className="w-8 h-8 text-blue-500 group-hover:text-purple-500 transition-colors" />
+      {/* Node circle - more subdued colors */}
+      <motion.div
+        className="relative z-10 w-24 h-24 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full flex items-center justify-center border-4 border-zinc-900 shadow-lg shadow-blue-600/30"
+        initial={{ scale: 0 }}
+        animate={isInView ? { scale: 1 } : { scale: 0 }}
+        transition={{ duration: 0.3, delay: step * 0.08 + 0.1, type: "spring", stiffness: 300 }}
+        whileHover={{ scale: 1.1, rotate: 360 }}
+      >
+        <Icon className="w-10 h-10 text-white" />
+      </motion.div>
+      
+      {/* Horizontal connector line to central vertical line */}
+      <motion.div
+        className={`absolute ${isLeft ? 'left-24' : 'right-24'} top-12 w-8 h-0.5 bg-gradient-to-${isLeft ? 'r' : 'l'} from-blue-600 to-transparent`}
+        initial={{ scaleX: 0 }}
+        animate={isInView ? { scaleX: 1 } : { scaleX: 0 }}
+        transition={{ duration: 0.25, delay: step * 0.08 + 0.15 }}
+        style={{ transformOrigin: isLeft ? 'left' : 'right' }}
+      />
+      
+      {/* Content card */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={isInView ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9 }}
+        transition={{ duration: 0.35, delay: step * 0.08 + 0.2 }}
+        className="flex-1 max-w-xs"
+      >
+        <div className="bg-zinc-950/80 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6 hover:border-blue-600/50 transition-all duration-300 shadow-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-blue-400 font-mono text-xs font-bold bg-blue-600/10 px-2 py-1 rounded">
+              STEP {step}
+            </span>
+            <h4 className="text-lg font-bold text-white">{title}</h4>
+          </div>
+          <p className="text-zinc-400 text-sm leading-relaxed">{description}</p>
+        </div>
+      </motion.div>
     </motion.div>
-    
-    {/* Content */}
-    <div className="flex-1 bg-zinc-950/50 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6 hover:border-blue-500/50 transition-all duration-300">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-blue-400 font-mono text-sm font-bold">[{step}/6]</span>
-        <h4 className="text-lg font-bold text-white">{title}</h4>
-      </div>
-      <p className="text-zinc-400 text-sm">{description}</p>
-    </div>
-  </motion.div>
-);
+  );
+};
 
 // Pricing Tier Component
 interface PricingTierProps {
@@ -163,13 +187,13 @@ const PricingTier = ({ name, price, period, description, features, cta, highligh
     transition={{ duration: 0.6, ease: "easeOut" }}
     className={`relative bg-zinc-950/50 backdrop-blur-sm border rounded-2xl p-8 ${
       highlighted 
-        ? 'border-blue-500 shadow-2xl shadow-blue-500/20 scale-105' 
+        ? 'border-blue-600 shadow-xl shadow-blue-600/10 scale-105' 
         : 'border-zinc-800/50 hover:border-zinc-700'
     } transition-all duration-300`}
     whileHover={!highlighted ? { y: -8 } : {}}
   >
     {highlighted && (
-      <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 bg-blue-500 text-white text-xs font-bold rounded-full">
+      <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 bg-blue-600 text-white text-xs font-bold rounded-full">
         MOST POPULAR
       </div>
     )}
@@ -178,7 +202,7 @@ const PricingTier = ({ name, price, period, description, features, cta, highligh
       <h3 className="text-2xl font-bold text-white mb-2">{name}</h3>
       <p className="text-zinc-400 text-sm mb-4">{description}</p>
       <div className="flex items-baseline justify-center gap-1">
-        <span className={`text-5xl font-bold ${highlighted ? 'text-blue-500' : 'text-white'}`}>
+        <span className={`text-5xl font-bold ${highlighted ? 'text-blue-400' : 'text-white'}`}>
           {price}
         </span>
         {period && <span className="text-zinc-500">{period}</span>}
@@ -188,7 +212,7 @@ const PricingTier = ({ name, price, period, description, features, cta, highligh
     <ul className="space-y-4 mb-8">
       {features.map((feature, i) => (
         <li key={i} className="flex items-start gap-3">
-          <Check className={`w-5 h-5 flex-shrink-0 mt-0.5 ${highlighted ? 'text-blue-500' : 'text-zinc-600'}`} />
+          <Check className={`w-5 h-5 flex-shrink-0 mt-0.5 ${highlighted ? 'text-blue-400' : 'text-zinc-600'}`} />
           <span className="text-zinc-300 text-sm">{feature}</span>
         </li>
       ))}
@@ -198,7 +222,7 @@ const PricingTier = ({ name, price, period, description, features, cta, highligh
       onClick={() => signIn('github')}
       className={`w-full py-4 rounded-xl font-bold transition-all duration-300 ${
         highlighted
-          ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg shadow-blue-500/30'
+          ? 'bg-blue-600 text-white hover:bg-blue-700'
           : 'bg-zinc-800 text-white hover:bg-zinc-700'
       }`}
     >
@@ -315,19 +339,19 @@ export default function LandingPage() {
         }}
       />
 
-      {/* Gradient orbs */}
-      <div className="fixed top-0 left-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed bottom-0 right-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+      {/* Gradient orbs - More subtle */}
+      <div className="fixed top-0 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="fixed bottom-0 right-1/4 w-96 h-96 bg-zinc-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Sticky Navigation */}
       <motion.header
         initial={{ y: -100 }}
         animate={{ y: 0 }}
-        className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-black/80 backdrop-blur-xl"
+        className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-black/90 backdrop-blur-xl"
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-500 rounded-lg flex items-center justify-center">
               <Database className="w-4 h-4 text-white" />
             </div>
             <span className="text-xl font-bold tracking-tighter">GATeR</span>
@@ -351,7 +375,7 @@ export default function LandingPage() {
       </motion.header>
 
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center px-6 pt-16">
+      <section className="relative min-h-screen flex items-center justify-center px-6 pt-32">
         <motion.div
           initial="hidden"
           animate="visible"
@@ -365,7 +389,7 @@ export default function LandingPage() {
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
             className="inline-flex items-center gap-2 px-4 py-2 mb-8 bg-zinc-900/50 backdrop-blur-sm border border-zinc-800 rounded-full text-sm"
           >
-            <Circle className="w-2 h-2 fill-blue-500 text-blue-500 animate-pulse" />
+            <Circle className="w-2 h-2 fill-blue-400 text-blue-400 animate-pulse" />
             <span className="text-zinc-400">FYP 2022–2026</span>
             <span className="text-zinc-600">·</span>
             <span className="text-zinc-400">NUCES Islamabad</span>
@@ -377,11 +401,11 @@ export default function LandingPage() {
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
             className="text-6xl md:text-8xl font-bold mb-6 tracking-tighter"
           >
-            <span className="bg-gradient-to-r from-white via-blue-100 to-blue-500 bg-clip-text text-transparent">
-              Intelligent Test
+            <span className="bg-gradient-to-r from-white via-zinc-300 to-blue-500 bg-clip-text text-transparent">
+              GATeR
             </span>
             <br />
-            <span className="text-white">Repair Engine</span>
+            <span className="text-white">Intelligent Test Repair</span>
           </motion.h1>
 
           {/* Subtitle */}
@@ -390,8 +414,8 @@ export default function LandingPage() {
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
             className="text-xl md:text-2xl text-zinc-400 mb-12 leading-relaxed max-w-3xl mx-auto"
           >
-            A complete toolkit for understanding your codebase and fixing failing tests automatically.
-            <span className="text-blue-500"> RAG-powered, context-aware, and hallucination-free.</span>
+            GATeR provides a complete toolkit for understanding your codebase and fixing failing tests automatically.
+            <span className="text-blue-400"> RAG-powered, context-aware, and hallucination-free.</span>
           </motion.p>
 
           {/* CTA Buttons */}
@@ -402,7 +426,7 @@ export default function LandingPage() {
           >
             <motion.button
               onClick={() => signIn('github')}
-              className="group flex items-center justify-center gap-3 bg-blue-500 text-white font-bold py-4 px-8 rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/30"
+              className="group flex items-center justify-center gap-3 bg-blue-600 text-white font-bold py-4 px-8 rounded-xl hover:bg-blue-700 transition-all"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
@@ -413,7 +437,7 @@ export default function LandingPage() {
             
             <motion.a
               href="#how-it-works"
-              className="flex items-center justify-center gap-2 border-2 border-zinc-700 text-white font-bold py-4 px-8 rounded-xl hover:border-zinc-500 hover:bg-zinc-900 transition-all"
+              className="flex items-center justify-center gap-2 border border-zinc-600 text-zinc-300 font-bold py-4 px-8 rounded-xl hover:border-zinc-400 hover:bg-zinc-900/50 transition-all"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
@@ -469,12 +493,12 @@ export default function LandingPage() {
       </AnimatedSection>
 
       {/* Pipeline Section */}
-      <AnimatedSection id="how-it-works" className="relative py-32 px-6 bg-zinc-950/30">
-        <div className="max-w-4xl mx-auto">
+      <AnimatedSection id="how-it-works" className="relative py-32 px-6 bg-zinc-950/30 overflow-hidden">
+        <div className="max-w-6xl mx-auto">
           <motion.div 
             variants={fadeInUp} 
             transition={{ duration: 0.8, ease: "easeOut" }}
-            className="text-center mb-16"
+            className="text-center mb-20"
           >
             <h2 className="text-4xl md:text-6xl font-bold mb-4 tracking-tighter">
               How It Works
@@ -484,18 +508,33 @@ export default function LandingPage() {
             </p>
           </motion.div>
 
-          <motion.div variants={staggerContainer} className="space-y-8">
-            {pipelineSteps.map((step, i) => (
-              <PipelineNode
-                key={i}
-                step={i + 1}
-                title={step.title}
-                icon={step.icon}
-                description={step.description}
-                isLast={i === pipelineSteps.length - 1}
-              />
-            ))}
-          </motion.div>
+          {/* Central vertical line container */}
+          <div className="relative">
+            {/* Vertical central line - more subdued colors */}
+            <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-600 via-blue-500 to-blue-600 transform -translate-x-1/2 rounded-full shadow-lg shadow-blue-600/30" />
+            
+            {/* Connection dots on the line */}
+            <div className="absolute left-1/2 transform -translate-x-1/2 top-0 bottom-0 flex flex-col justify-around py-12">
+              {pipelineSteps.map((_, i) => (
+                <div key={i} className="w-3 h-3 bg-blue-400 rounded-full border-2 border-zinc-900 shadow-lg shadow-blue-600/30" />
+              ))}
+            </div>
+
+            {/* Pipeline nodes - alternating left/right */}
+            <div className="relative space-y-16 py-12">
+              {pipelineSteps.map((step, i) => (
+                <PipelineNode
+                  key={i}
+                  step={i + 1}
+                  title={step.title}
+                  icon={step.icon}
+                  description={step.description}
+                  isLast={i === pipelineSteps.length - 1}
+                  isLeft={i % 2 === 0}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       </AnimatedSection>
 
@@ -527,7 +566,7 @@ export default function LandingPage() {
       </AnimatedSection>
 
       {/* About Section */}
-      <AnimatedSection id="about" className="relative py-32 px-6 bg-zinc-950/30">
+      <AnimatedSection id="about" className="relative py-20 px-6 bg-zinc-950/30">
         <div className="max-w-6xl mx-auto">
           <motion.div 
             variants={fadeInUp} 
@@ -553,10 +592,10 @@ export default function LandingPage() {
                 key={i}
                 variants={scaleIn}
                 transition={{ duration: 0.6, ease: "easeOut", delay: i * 0.1 }}
-                className="bg-zinc-950/50 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6 text-center hover:border-blue-500/50 transition-all duration-300"
+                className="bg-zinc-950/50 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6 text-center hover:border-blue-600/50 transition-all duration-300"
                 whileHover={{ y: -4 }}
               >
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full mx-auto mb-4" />
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full mx-auto mb-4" />
                 <h3 className="text-lg font-bold text-white mb-1">{member.name}</h3>
                 <p className="text-sm text-blue-400 mb-2">{member.role}</p>
                 <p className="text-xs text-zinc-500">{member.university}</p>
@@ -567,7 +606,7 @@ export default function LandingPage() {
       </AnimatedSection>
 
       {/* Footer */}
-      <footer className="relative border-t border-zinc-800/50 py-12 px-6">
+      <footer className="relative border-t border-zinc-800/50 py-12 px-6 mt-8">
         <div className="max-w-7xl mx-auto">
           <div className="grid md:grid-cols-4 gap-8 mb-12">
             {/* Brand */}
