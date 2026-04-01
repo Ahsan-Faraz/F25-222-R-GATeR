@@ -361,13 +361,25 @@ class EmbeddingGenerator:
     def get_cache_stats(self) -> Dict:
         """Get cache statistics"""
         if not self.cache_dir.exists():
-            return {"cached_embeddings": 0, "cache_size_mb": 0}
+            mem_n = len(self._memory_cache)
+            cap = max(1, self.memory_cache_size)
+            return {
+                "cached_embeddings": 0,
+                "cache_size_mb": 0,
+                "memory_cached_embeddings": mem_n,
+                "memory_cache_capacity": self.memory_cache_size,
+                "memory_cache_fill_percent": round(100.0 * mem_n / cap, 1),
+            }
         
         cache_files = list(self.cache_dir.glob("*.pkl"))
         total_size = sum(f.stat().st_size for f in cache_files)
         
+        mem_n = len(self._memory_cache)
+        cap = max(1, self.memory_cache_size)
         return {
             "cached_embeddings": len(cache_files),
-            "cache_size_mb": total_size / (1024 * 1024),
-            "memory_cached_embeddings": len(self._memory_cache)
+            "cache_size_mb": round(total_size / (1024 * 1024), 2),
+            "memory_cached_embeddings": mem_n,
+            "memory_cache_capacity": self.memory_cache_size,
+            "memory_cache_fill_percent": round(100.0 * mem_n / cap, 1),
         }

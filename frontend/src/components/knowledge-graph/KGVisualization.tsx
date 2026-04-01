@@ -25,16 +25,16 @@ interface VisualizationData {
   relationships: VisualizationLink[];
 }
 
-// Minimalist color mapping - using accent colors sparingly
+// Stitch Material roles (primary / secondary / tertiary)
 const typeColors: Record<string, string> = {
-  function: '#3b82f6', // Blue
-  method: '#3b82f6',
-  class: '#a855f7',    // Purple
-  module: '#f59e0b',   // Amber
-  file: '#71717a',     // Zinc
+  function: '#c3f5ff',
+  method: '#c3f5ff',
+  class: '#cdbdff',
+  module: '#ffc948',
+  file: '#71717a',
   variable: '#71717a',
-  import: '#06b6d4',   // Cyan
-  test: '#ec4899',     // Pink
+  import: '#00daf3',
+  test: '#ffb4ab',
   unknown: '#52525b',
 };
 

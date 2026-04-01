@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppState } from '@/context/AppStateContext';
 import { getAnalysisProgress } from '@/lib/api/repo';
+import type { AnalysisProgress } from '@/types';
 
 const TOTAL_STEPS = 6; // Total analysis steps
 
@@ -17,17 +18,23 @@ export function useAnalysisProgress(enabled: boolean = true) {
       // Map Flask response to our format
       const progress = data.progress;
       const status = data.status;
+      const step = progress.step ?? 0;
       
       // Calculate percentage based on step
-      const percentage = progress.step > 0 
-        ? Math.round((progress.step / TOTAL_STEPS) * 100) 
+      const percentage = step > 0 
+        ? Math.round((step / TOTAL_STEPS) * 100) 
         : 0;
       
       setAnalysisProgress({
-        ...progress,
+        step,
+        step_name: progress.step_name ?? '',
+        step_description: progress.step_description ?? '',
+        details: progress.details ?? {},
+        start_time: null,
+        current_step_start: null,
         total_steps: TOTAL_STEPS,
         percentage,
-        status: status as any,
+        status: status as AnalysisProgress['status'],
       });
       
       // Update analyzing state based on status

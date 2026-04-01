@@ -36,7 +36,7 @@ export default function VectorPanel() {
     setResults([]);
     try {
       const data = await semanticSearch({ text: query, topK });
-      setResults(data || []);
+      setResults((data || []) as unknown as SearchResult[]);
     } catch (err: any) {
       setError(err.message || 'Search failed');
       setResults([]);

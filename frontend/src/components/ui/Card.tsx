@@ -16,10 +16,12 @@ export default function Card({
   action 
 }: CardProps) {
   return (
-    <div className={`gater-card ${className}`}>
+    <div
+      className={`rounded-lg border border-outline-variant/10 bg-surface-container-lowest overflow-hidden ${className}`}
+    >
       {title && (
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-text-secondary">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-outline-variant/10">
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/80">
             {title}
           </h3>
           {action && <div>{action}</div>}

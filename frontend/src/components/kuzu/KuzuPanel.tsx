@@ -112,7 +112,7 @@ export default function KuzuPanel() {
     setError(null);
     try {
       const data = await getKuzuNodes({ limit });
-      setNodes(Array.isArray(data) ? data : []);
+      setNodes((Array.isArray(data) ? data : []) as KuzuNode[]);
     } catch (err: any) {
       setError(err.message || 'Failed to load nodes');
       setNodes([]);
@@ -126,7 +126,7 @@ export default function KuzuPanel() {
     setError(null);
     try {
       const data = await getKuzuRelationships({ limit });
-      setRelationships(Array.isArray(data) ? data : []);
+      setRelationships((Array.isArray(data) ? data : []) as KuzuRelationship[]);
     } catch (err: any) {
       setError(err.message || 'Failed to load relationships');
       setRelationships([]);

@@ -3,7 +3,6 @@
 import React, { useEffect } from 'react';
 import { useSession, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import Button from '@/components/ui/Button';
 import { GitBranch, Database, Network, Zap, Shield, Lock, ChevronRight } from 'lucide-react';
 
 const GithubIcon = () => (
@@ -24,7 +23,7 @@ export default function LoginPage() {
 
   if (status === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg">
+      <div className="min-h-screen flex items-center justify-center bg-surface-container-lowest">
         <div className="skeleton w-12 h-12 rounded-full" />
       </div>
     );
@@ -38,24 +37,31 @@ export default function LoginPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-bg flex">
+    <div className="min-h-screen bg-surface-container-lowest flex">
       {/* Left Panel - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 border-r border-border">
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 border-r border-outline-variant/15 bg-surface-container-lowest">
         <div>
           {/* Logo */}
           <div className="flex items-center gap-3 mb-16">
-            <div className="w-10 h-10 bg-accent rounded-md flex items-center justify-center">
-              <Database className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-lg bg-primary-container flex items-center justify-center">
+              <Database className="w-5 h-5 text-on-primary-container" />
             </div>
-            <span className="text-xl font-semibold text-text-primary tracking-tight">GATeR</span>
+            <div>
+              <span className="text-xl font-headline font-bold text-primary tracking-tight block leading-none">
+                GATeR
+              </span>
+              <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-widest mt-1 block">
+                Graph • Knowledge • Repair
+              </span>
+            </div>
           </div>
 
           {/* Hero */}
           <div className="space-y-6 max-w-md">
-            <h1 className="text-display text-text-primary leading-tight">
+            <h1 className="text-display font-headline font-extrabold text-on-surface leading-tight tracking-tight">
               Graph-Augmented<br />Test Retrieval
             </h1>
-            <p className="text-text-secondary text-lg leading-relaxed">
+            <p className="text-on-surface-variant text-lg leading-relaxed">
               AI-powered test repair using knowledge graphs and semantic search. 
               Connect your repository to get started.
             </p>
@@ -68,10 +74,10 @@ export default function LoginPage() {
               return (
                 <div 
                   key={index}
-                  className="flex items-center gap-3 p-3 bg-surface-elevated border border-border rounded-md"
+                  className="flex items-center gap-3 p-3 rounded-lg bg-surface-container border border-outline-variant/15"
                 >
-                  <Icon className="w-5 h-5 text-accent" />
-                  <span className="text-sm text-text-primary">{feature.label}</span>
+                  <Icon className="w-5 h-5 text-primary" />
+                  <span className="text-sm text-on-surface">{feature.label}</span>
                 </div>
               );
             })}
@@ -79,7 +85,7 @@ export default function LoginPage() {
         </div>
 
         {/* Trust badges */}
-        <div className="flex items-center gap-6 text-sm text-text-muted">
+        <div className="flex items-center gap-6 text-sm text-on-surface-variant">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4" />
             <span>Secure OAuth</span>
@@ -92,29 +98,29 @@ export default function LoginPage() {
       </div>
 
       {/* Right Panel - Login */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8 bg-background">
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile Logo */}
           <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 bg-accent rounded-md flex items-center justify-center">
-              <Database className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-lg bg-primary-container flex items-center justify-center">
+              <Database className="w-5 h-5 text-on-primary-container" />
             </div>
-            <span className="text-xl font-semibold text-text-primary tracking-tight">GATeR</span>
+            <span className="text-xl font-headline font-bold text-primary tracking-tight">GATeR</span>
           </div>
 
           {/* Card */}
-          <div className="gater-card p-8">
+          <div className="rounded-lg border border-outline-variant/10 bg-surface-container-lowest p-8">
             <div className="space-y-6">
               <div className="space-y-2 text-center">
-                <h2 className="text-xl font-semibold text-text-primary">Sign in to continue</h2>
-                <p className="text-sm text-text-muted">
+                <h2 className="text-xl font-headline font-semibold text-on-surface">Sign in to continue</h2>
+                <p className="text-sm text-on-surface-variant">
                   Access your repositories and start analyzing
                 </p>
               </div>
 
               <button
                 onClick={() => signIn('github', { callbackUrl: '/' })}
-                className="w-full flex items-center justify-center gap-3 bg-white text-black font-medium py-3 px-4 rounded-md hover:bg-zinc-100 transition-colors"
+                className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-primary to-primary-container text-on-primary font-medium py-3 px-4 rounded-lg hover:opacity-95 transition-opacity shadow-sm"
               >
                 <GithubIcon />
                 Continue with GitHub
@@ -122,35 +128,35 @@ export default function LoginPage() {
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border" />
+                  <div className="w-full border-t border-outline-variant/20" />
                 </div>
                 <div className="relative flex justify-center text-xs">
-                  <span className="px-2 bg-surface text-text-muted">Why GitHub?</span>
+                  <span className="px-2 bg-surface-container-lowest text-on-surface-variant">Why GitHub?</span>
                 </div>
               </div>
 
-              <ul className="space-y-3 text-sm text-text-secondary">
+              <ul className="space-y-3 text-sm text-on-surface-variant">
                 <li className="flex items-start gap-2">
-                  <ChevronRight className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
+                  <ChevronRight className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                   <span>Access public and private repositories</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <ChevronRight className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
+                  <ChevronRight className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                   <span>Analyze commits, PRs, and issues</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <ChevronRight className="w-4 h-4 text-accent mt-0.5 flex-shrink-0" />
+                  <ChevronRight className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                   <span>No data stored – analyze on demand</span>
                 </li>
               </ul>
             </div>
           </div>
 
-          <p className="text-xs text-text-muted text-center">
+          <p className="text-xs text-on-surface-variant/80 text-center">
             By signing in, you agree to our{' '}
-            <a href="#" className="text-accent hover:underline">Terms</a>
+            <a href="#" className="text-primary hover:underline">Terms</a>
             {' '}and{' '}
-            <a href="#" className="text-accent hover:underline">Privacy Policy</a>
+            <a href="#" className="text-primary hover:underline">Privacy Policy</a>
           </p>
         </div>
       </div>

@@ -14,8 +14,8 @@ export function useAutoRefresh(enabled: boolean = true) {
       if (data.repo_info) {
         setCurrentRepo(data.repo_info);
       }
-      if (data.local_status) {
-        setRepoStatus(data.local_status);
+      if (data.local_status && typeof data.local_status === 'object') {
+        setRepoStatus(data.local_status as import('@/types').RepositoryStatus);
       }
     } catch (error) {
       // Silently fail - this is a background refresh

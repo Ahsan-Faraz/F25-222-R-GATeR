@@ -45,7 +45,7 @@ export default function KGCompassPanel() {
       });
       
       console.log('KGCompass API Response:', JSON.stringify(data, null, 2));
-      setResults(data.top_candidates || []);
+      setResults((data.top_candidates || []) as unknown as RelevanceResult[]);
       setDebugInfo(data.debug_info || null);
     } catch (err: any) {
       setError(err.message || 'Relevance calculation failed');

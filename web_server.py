@@ -1221,6 +1221,15 @@ def vector_stats():
             except Exception as e:
                 logger.warning(f"Could not retrieve vector data: {e}")
         
+        embedding_cache_stats = {}
+        try:
+            if hasattr(gater, 'relevance_scorer') and gater.relevance_scorer and hasattr(
+                gater.relevance_scorer, 'embedding_generator'
+            ):
+                embedding_cache_stats = gater.relevance_scorer.embedding_generator.get_cache_stats()
+        except Exception as e:
+            logger.debug(f"Embedding cache stats unavailable: {e}")
+        
         return jsonify({
             'success': True,
             'available': True,
@@ -1230,7 +1239,8 @@ def vector_stats():
             'status': db_stats.get('status', 'unknown'),
             'table_details': table_stats,
             'vectors_data': vectors_data,
-            'data_count': len(vectors_data)
+            'data_count': len(vectors_data),
+            'embedding_cache': embedding_cache_stats,
         })
         
     except Exception as e:

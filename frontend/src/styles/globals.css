@@ -2,32 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Import Inter and JetBrains Mono */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Stitch GATeR Obsidian — Plus Jakarta Sans, Inter, JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @layer base {
   :root {
-    /* Minimalist-Futurism Color System */
-    --color-bg: #000000;
-    --color-bg-zinc: #09090b;
-    --color-bg-elevated: #0a0a0a;
-    
-    --color-surface: #09090b;
-    --color-surface-hover: #18181b;
-    --color-surface-active: #27272a;
-    
-    --color-border: #27272a;
+    /* Stitch GATeR Obsidian — align CSS vars with tailwind.config.js */
+    --color-bg: #131315;
+    --color-bg-zinc: #1c1b1d;
+    --color-bg-elevated: #201f21;
+
+    --color-surface: #131315;
+    --color-surface-hover: #2a2a2b;
+    --color-surface-active: #353436;
+
+    --color-border: #3b494c;
     --color-border-subtle: #1f1f23;
-    --color-border-hover: #3f3f46;
-    
-    --color-text-primary: #fafafa;
-    --color-text-secondary: #a1a1aa;
+    --color-border-hover: #849396;
+
+    --color-text-primary: #e5e1e3;
+    --color-text-secondary: #bac9cc;
     --color-text-muted: #71717a;
     --color-text-faint: #52525b;
-    
-    --color-accent: #3b82f6;
-    --color-accent-hover: #2563eb;
-    
+
+    --color-accent: #00e5ff;
+    --color-accent-hover: #00daf3;
+
     --color-success: #22c55e;
     --color-warning: #f59e0b;
     --color-error: #ef4444;
@@ -42,8 +42,7 @@
   }
 
   body {
-    @apply bg-black text-text-primary antialiased;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @apply bg-surface-container-lowest text-on-surface antialiased font-body;
     font-feature-settings: 'cv11', 'ss01';
   }
 
@@ -56,60 +55,60 @@
 @layer components {
   /* === CORE COMPONENTS === */
   
-  /* Pro Card - No shadows, just borders */
+  /* Panels — tonal border (Stitch bento) */
   .gater-card {
-    @apply bg-bg-zinc border border-border rounded-card overflow-hidden;
+    @apply bg-surface-container-lowest border border-outline-variant/10 rounded-lg overflow-hidden;
   }
-  
+
   .gater-card-hover {
-    @apply gater-card transition-colors hover:border-border-hover;
+    @apply gater-card transition-colors hover:border-outline-variant/30;
   }
 
   /* Ghost Input */
   .ghost-input {
-    @apply w-full bg-transparent border border-border rounded-subtle px-4 py-3 
-           text-text-primary placeholder-text-muted text-sm
-           focus:border-text-secondary focus:outline-none focus:ring-0
+    @apply w-full bg-surface-container-low/50 border border-outline-variant/40 rounded-lg px-4 py-3
+           text-on-surface placeholder:text-on-surface-variant/60 text-sm
+           focus:border-primary/50 focus:outline-none focus:ring-0
            transition-colors;
   }
-  
+
   .ghost-input:focus {
-    @apply border-text-secondary;
+    @apply border-primary/50;
   }
 
   /* Ghost Button */
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 
-           border border-border px-4 py-2 text-sm font-medium text-text-secondary
-           hover:bg-white hover:text-black hover:border-white
-           transition-all rounded-subtle;
+    @apply inline-flex items-center justify-center gap-2
+           border border-outline-variant/40 px-4 py-2 text-sm font-medium text-on-surface-variant
+           hover:bg-surface-container-high hover:text-on-surface hover:border-outline-variant/60
+           transition-all rounded-lg;
   }
-  
+
   /* Primary Button */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2
-           bg-accent text-white px-4 py-2 text-sm font-medium rounded-subtle
-           hover:bg-accent-hover transition-colors
+           bg-gradient-to-r from-primary to-primary-container text-on-primary px-4 py-2 text-sm font-medium rounded-lg
+           hover:opacity-95 transition-opacity
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
-  
+
   /* Secondary Button */
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2
-           bg-transparent border border-border text-text-primary px-4 py-2 text-sm font-medium
-           hover:bg-surface-hover transition-colors rounded-subtle
+           bg-surface-container border border-outline-variant/40 text-on-surface px-4 py-2 text-sm font-medium
+           hover:bg-surface-container-high transition-colors rounded-lg
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Navigation Link */
   .nav-link {
-    @apply flex items-center gap-3 px-3 py-2.5 text-text-secondary text-sm
-           hover:text-text-primary hover:bg-surface-hover 
-           rounded-subtle transition-colors cursor-pointer;
+    @apply flex items-center gap-3 px-3 py-2.5 text-on-surface-variant text-sm
+           hover:text-on-surface hover:bg-surface-container-high
+           rounded-lg transition-colors cursor-pointer;
   }
-  
+
   .nav-link-active {
-    @apply text-text-primary bg-surface-active;
+    @apply text-primary bg-surface-container;
   }
 
   /* Stat Ribbon */
@@ -148,7 +147,7 @@
 
   /* Skeleton Loader */
   .skeleton {
-    @apply bg-gradient-to-r from-surface via-surface-hover to-surface bg-[length:400%_100%] animate-skeleton rounded;
+    @apply bg-gradient-to-r from-surface-container-lowest via-surface-container-high to-surface-container-lowest bg-[length:400%_100%] animate-skeleton rounded-lg;
   }
 
   /* Section Header */
@@ -164,14 +163,14 @@
 
   /* Command Palette Trigger */
   .cmd-trigger {
-    @apply flex items-center gap-2 px-3 py-1.5 text-sm text-text-muted
-           bg-surface border border-border rounded-subtle
-           hover:border-border-hover hover:text-text-secondary transition-colors cursor-pointer;
+    @apply flex items-center gap-2 px-3 py-1.5 text-sm text-on-surface-variant
+           bg-surface-container border border-outline-variant/40 rounded-lg
+           hover:border-outline-variant/60 hover:text-on-surface transition-colors cursor-pointer;
   }
-  
+
   .kbd {
-    @apply inline-flex items-center justify-center px-1.5 py-0.5 
-           text-xs font-mono text-text-muted bg-surface-active border border-border rounded;
+    @apply inline-flex items-center justify-center px-1.5 py-0.5
+           text-xs font-mono text-on-surface-variant bg-surface-container-highest border border-outline-variant/40 rounded;
   }
 
   /* Breadcrumb */
@@ -197,20 +196,20 @@
   }
   
   .slider-input::-webkit-slider-thumb {
-    @apply appearance-none w-4 h-4 rounded-full bg-white border-2 border-accent cursor-pointer;
+    @apply appearance-none w-4 h-4 rounded-full bg-on-surface border-2 border-primary cursor-pointer;
     margin-top: -5px;
   }
-  
+
   .slider-input::-moz-range-thumb {
-    @apply w-4 h-4 rounded-full bg-white border-2 border-accent cursor-pointer border-0;
+    @apply w-4 h-4 rounded-full bg-on-surface border-2 border-primary cursor-pointer;
   }
-  
+
   .slider-input::-webkit-slider-runnable-track {
     @apply w-full h-1.5 rounded-full;
   }
-  
+
   .slider-input::-moz-range-track {
-    @apply w-full h-1.5 rounded-full bg-border;
+    @apply w-full h-1.5 rounded-full bg-outline-variant/40;
   }
 }
 
@@ -245,16 +244,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: #0e0e0f;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: #3b494c;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #849396;
 }
 
 /* === CODE BLOCKS === */
@@ -282,7 +281,40 @@ pre code {
   transition: none !important;
 }
 
+/* === Stitch (project 11940742516565365524) — Material Symbols + utilities === */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+  font-size: 20px;
+  vertical-align: middle;
+}
+
+.glass-panel {
+  background: rgba(53, 52, 54, 0.6);
+  backdrop-filter: blur(12px);
+}
+
+.active-tab-glow {
+  box-shadow: 0 0 15px rgba(195, 245, 255, 0.1);
+}
+
+.code-scroll::-webkit-scrollbar,
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.code-scroll::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0e0e0f;
+}
+
+.code-scroll::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #3b494c;
+  border-radius: 2px;
+}
+
 /* === FOCUS STATES === */
 :focus-visible {
-  @apply outline-none ring-1 ring-accent ring-offset-1 ring-offset-black;
+  @apply outline-none ring-1 ring-primary/50 ring-offset-1 ring-offset-surface-container-lowest;
 }

@@ -1,9 +1,10 @@
-// Reusable Button Component - Minimalist-Futurism Design
+// Primary / secondary actions — Stitch GATeR Obsidian (project 11940742516565365524)
 
 import React, { ButtonHTMLAttributes } from 'react';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+  /** @deprecated alias for primary — Stitch gradient CTA */
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'success' | 'accent';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   icon?: React.ReactNode;
@@ -19,11 +20,16 @@ export default function Button({
   className = '',
   ...props
 }: ButtonProps) {
-  const baseStyles = 'inline-flex items-center justify-center font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed';
-  
+  const baseStyles =
+    'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-surface-container-lowest disabled:opacity-50 disabled:cursor-not-allowed';
+
   const variantStyles = {
-    primary: 'bg-accent text-white hover:bg-accent-hover',
-    secondary: 'bg-surface-elevated border border-border text-text-primary hover:border-border-hover hover:bg-surface-hover',
+    primary:
+      'bg-gradient-to-r from-primary to-primary-container text-on-primary shadow-sm hover:opacity-95 active:opacity-90',
+    accent:
+      'bg-gradient-to-r from-primary to-primary-container text-on-primary shadow-sm hover:opacity-95 active:opacity-90',
+    secondary:
+      'bg-surface-container border border-outline-variant/40 text-on-surface hover:bg-surface-container-high hover:border-outline-variant/60',
     ghost: 'btn-ghost',
     danger: 'bg-red-600 text-white hover:bg-red-500',
     success: 'bg-green-600 text-white hover:bg-green-500',

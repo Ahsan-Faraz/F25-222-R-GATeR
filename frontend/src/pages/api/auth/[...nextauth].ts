@@ -1,6 +1,13 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import GithubProvider from 'next-auth/providers/github';
 
+/**
+ * Env that must stay consistent or you get broken sessions / redirect loops:
+ * - NEXTAUTH_URL: exact origin you use in the browser (scheme + host + port). Must match `npm run dev` port
+ *   (default 3000). If another process steals :3000, Next may use 3001 — then set NEXTAUTH_URL to that port.
+ * - GitHub OAuth app "Authorization callback URL" must include: {NEXTAUTH_URL}/api/auth/callback/github
+ *   (separate from Flask’s GITHUB_OAUTH_REDIRECT_URI on :5000).
+ */
 export const authOptions: NextAuthOptions = {
   providers: [
     GithubProvider({
@@ -39,10 +46,19 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: '/login',
-    error: '/login',
+    // Must not be the same route as signIn — that produced /login?error=undefined loops and noisy /api/auth/error traffic.
+    error: '/auth-error',
   },
   secret: process.env.NEXTAUTH_SECRET,
-  debug: process.env.NODE_ENV === 'development',
+  /** Set NEXTAUTH_DEBUG=true to enable NextAuth server debug (noisy POST /api/auth/_log in dev). */
+  debug: process.env.NEXTAUTH_DEBUG === 'true',
+  events: {
+    signIn: async ({ account }) => {
+      if (process.env.NODE_ENV === 'development' && account?.provider === 'github') {
+        console.info('[next-auth] GitHub sign-in completed');
+      }
+    },
+  },
 };
 
 export default NextAuth(authOptions);

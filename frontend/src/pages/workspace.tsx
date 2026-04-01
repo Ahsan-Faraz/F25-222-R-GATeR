@@ -3,13 +3,13 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import DashboardContent from '@/components/workspace/DashboardContent';
 
-export default function HomePage() {
+export default function WorkspacePage() {
   const { status } = useSession();
   const router = useRouter();
 
   useEffect(() => {
     if (status === 'unauthenticated') {
-      router.replace('/landing');
+      router.replace('/login');
     }
   }, [status, router]);
 
@@ -23,11 +23,7 @@ export default function HomePage() {
   }
 
   if (status === 'unauthenticated') {
-    return (
-      <div className="min-h-[40vh] flex items-center justify-center text-on-surface-variant text-sm">
-        Redirecting…
-      </div>
-    );
+    return null;
   }
 
   return <DashboardContent />;

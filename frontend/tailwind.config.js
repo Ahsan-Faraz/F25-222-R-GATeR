@@ -1,69 +1,126 @@
 /** @type {import('tailwindcss').Config} */
+// Stitch project 11940742516565365524 — GATeR Obsidian (exact token names + hex from Stitch HTML exports)
 module.exports = {
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        // Minimalist-Futurism Palette - Neutral Scale
-        bg: {
-          DEFAULT: '#000000',      // True Black
-          zinc: '#09090b',         // Deep Zinc (zinc-950)
-          elevated: '#0a0a0a',     // Slightly elevated surface
-        },
-        surface: {
-          DEFAULT: '#09090b',      // Deep Zinc
-          hover: '#18181b',        // zinc-900
-          active: '#27272a',       // zinc-800
+        // --- Stitch Material roles (exact hex) ---
+        'on-tertiary': '#3f2e00',
+        outline: '#849396',
+        'surface-bright': '#3a393a',
+        'on-error-container': '#ffdad6',
+        primary: '#c3f5ff',
+        'inverse-surface': '#e5e1e3',
+        'surface-variant': '#353436',
+        'surface-tint': '#00daf3',
+        'primary-container': '#00e5ff',
+        'on-surface-variant': '#bac9cc',
+        'on-tertiary-container': '#725400',
+        'on-background': '#e5e1e3',
+        'secondary-fixed-dim': '#cdbdff',
+        'surface-dim': '#131315',
+        'on-secondary-container': '#c0acff',
+        'on-secondary-fixed-variant': '#4f00d0',
+        'tertiary-container': '#ffc948',
+        'inverse-primary': '#006875',
+        'on-primary': '#00363d',
+        'secondary-container': '#5203d5',
+        secondary: '#cdbdff',
+        'on-surface': '#e5e1e3',
+        'surface-container-high': '#2a2a2b',
+        'outline-variant': '#3b494c',
+        'surface-container-highest': '#353436',
+        error: '#ffb4ab',
+        'tertiary-fixed': '#ffdf9e',
+        'secondary-fixed': '#e8deff',
+        'surface-container-low': '#1c1b1d',
+        'on-secondary-fixed': '#20005f',
+        'on-primary-fixed': '#001f24',
+        'on-error': '#690005',
+        'primary-fixed-dim': '#00daf3',
+        'error-container': '#93000a',
+        'on-tertiary-fixed-variant': '#5b4300',
+        'on-secondary': '#370096',
+        'on-primary-container': '#00626e',
+        'on-primary-fixed-variant': '#004f58',
+        'on-tertiary-fixed': '#261a00',
+        tertiary: '#ffebc6',
+        'tertiary-fixed-dim': '#fabd00',
+        surface: '#131315',
+        'inverse-on-surface': '#313032',
+        'primary-fixed': '#9cf0ff',
+        'surface-container-lowest': '#0e0e0f',
+        background: '#131315',
+        'surface-container': '#201f21',
+        /** Stitch layering — maps old utility names used across panels */
+        'surface-elevated': '#201f21',
+        'surface-hover': '#2a2a2b',
+        'surface-active': '#353436',
+
+        // --- Legacy aliases (existing panels: text-text-primary, border-border, bg-bg, accent) ---
+        text: {
+          primary: '#e5e1e3',
+          secondary: '#bac9cc',
+          muted: '#71717a',
+          faint: '#52525b',
         },
         border: {
-          DEFAULT: '#27272a',      // zinc-800 - structural lines
-          subtle: '#1f1f23',       // Subtler border
-          hover: '#3f3f46',        // zinc-700 - hover state
+          DEFAULT: '#3b494c',
+          subtle: '#1f1f23',
+          hover: '#3f3f46',
         },
-        text: {
-          primary: '#fafafa',      // zinc-50 - titles
-          secondary: '#a1a1aa',    // zinc-400 - metadata/labels
-          muted: '#71717a',        // zinc-500 - tertiary
-          faint: '#52525b',        // zinc-600 - very subtle
+        bg: {
+          DEFAULT: '#131315',
+          zinc: '#1c1b1d',
+          elevated: '#201f21',
         },
         accent: {
-          DEFAULT: '#3b82f6',      // Blue-500 - primary action
-          hover: '#2563eb',        // Blue-600
-          subtle: 'rgba(59, 130, 246, 0.1)', // Subtle accent bg
+          DEFAULT: '#00e5ff',
+          hover: '#00daf3',
+          subtle: 'rgba(0, 229, 255, 0.1)',
         },
-        // Status colors
-        success: '#22c55e',        // green-500
-        warning: '#f59e0b',        // amber-500
-        error: '#ef4444',          // red-500
-        info: '#3b82f6',           // blue-500
+        success: '#22c55e',
+        warning: '#f59e0b',
+        info: '#00e5ff',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-        display: ['Geist', 'Inter', 'system-ui', 'sans-serif'],
+        /** Stitch HTML uses `font-inter` on sidebar nav */
+        inter: ['Inter', 'system-ui', 'sans-serif'],
+        headline: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        body: ['Inter', 'system-ui', 'sans-serif'],
+        label: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
       },
       fontSize: {
         'display-xl': ['clamp(2.5rem, 5vw, 4rem)', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
-        'display-lg': ['clamp(2rem, 4vw, 3rem)', { lineHeight: '1.15', letterSpacing: '-0.02em' }],
-        'display': ['clamp(1.5rem, 3vw, 2.25rem)', { lineHeight: '1.2', letterSpacing: '-0.01em' }],
+        'display-lg': ['3.5rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
+        display: ['clamp(1.5rem, 3vw, 2.25rem)', { lineHeight: '1.2', letterSpacing: '-0.01em' }],
       },
       spacing: {
-        '18': '4.5rem',
-        '88': '22rem',
-        'sidebar': '240px',
+        18: '4.5rem',
+        88: '22rem',
+        sidebar: '16rem',
       },
       borderRadius: {
-        'subtle': '6px',
-        'card': '8px',
+        DEFAULT: '0.25rem',
+        lg: '0.5rem',
+        xl: '0.75rem',
+        full: '9999px',
+        subtle: '0.25rem',
+        card: '0.5rem',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',
         'slide-up': 'slideUp 0.4s ease-out',
-        'skeleton': 'skeleton 1.5s ease-in-out infinite',
+        skeleton: 'skeleton 1.5s ease-in-out infinite',
         'pulse-subtle': 'pulseSubtle 2s ease-in-out infinite',
       },
       keyframes: {
@@ -85,7 +142,7 @@ module.exports = {
         },
       },
       transitionTimingFunction: {
-        'smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+        smooth: 'cubic-bezier(0.4, 0, 0.2, 1)',
       },
     },
   },

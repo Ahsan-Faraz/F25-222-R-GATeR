@@ -1,6 +1,6 @@
-// Slider Component - Minimalist-Futurism Design
-
 import React, { ChangeEvent } from 'react';
+
+/** Stitch primary fill track + surface-container-high remainder */
 
 interface SliderProps {
   label?: string;
@@ -31,9 +31,9 @@ export default function Slider({
     <div className="space-y-2">
       {label && (
         <div className="flex justify-between items-center">
-          <label className="text-xs text-text-muted uppercase tracking-wider">{label}</label>
+          <label className="text-xs text-on-surface-variant uppercase tracking-wider">{label}</label>
           {showValue && (
-            <span className="text-sm font-mono text-text-primary">{value.toFixed(2)}</span>
+            <span className="text-sm font-mono text-on-surface">{value.toFixed(2)}</span>
           )}
         </div>
       )}
@@ -47,7 +47,7 @@ export default function Slider({
           onChange={handleChange}
           className="slider-input w-full"
           style={{
-            background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${percentage}%, #27272a ${percentage}%, #27272a 100%)`
+            background: `linear-gradient(to right, #c3f5ff 0%, #c3f5ff ${percentage}%, #2a2a2b ${percentage}%, #2a2a2b 100%)`,
           }}
         />
       </div>

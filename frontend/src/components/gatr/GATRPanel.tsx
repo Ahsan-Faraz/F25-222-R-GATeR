@@ -1,7 +1,7 @@
 // GATR Test Repair Panel - Minimalist-Futurism Design
 
 import React, { useState, useEffect } from 'react';
-import { repairTest, getGATRStatus, getTestContext } from '@/lib/api/gatr';
+import { repairTest, getGATRStatus, getTestContext, type GATREngineStatus } from '@/lib/api/gatr';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import DiffViewer from '../ui/DiffViewer';
@@ -12,23 +12,6 @@ interface RepairState {
   status: 'idle' | 'processing' | 'completed' | 'failed';
   message: string;
   result: any;
-}
-
-interface GATREngineStatus {
-  available: boolean;
-  llm?: {
-    available?: boolean;
-    model?: string;
-    provider?: string;
-    url?: string;
-    target_model_available?: boolean;
-    installed_models?: string[];
-    error?: string;
-  };
-  databases?: {
-    kuzu?: { connected: boolean; entities?: number };
-    lancedb?: { connected: boolean; embeddings?: number };
-  };
 }
 
 export default function GATRPanel() {
@@ -95,7 +78,7 @@ export default function GATRPanel() {
       });
 
       setRepairState({
-        repairId: result.repair_id,
+        repairId: result.repair_id ?? null,
         status: result.success ? 'completed' : 'failed',
         message: result.success ? 'Repair completed!' : (result.error || 'Repair failed'),
         result: result,

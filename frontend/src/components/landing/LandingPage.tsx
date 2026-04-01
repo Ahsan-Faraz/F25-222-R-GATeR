@@ -1,7 +1,16 @@
 // Premium Landing Page - Cyber/Technical Aesthetic with Framer Motion
 
 import React, { useEffect, useRef } from 'react';
-import { motion, useScroll, useTransform, useInView } from 'framer-motion';
+import {
+  motion as motionBase,
+  useScroll,
+  useTransform,
+  useInView,
+  type MotionStyle,
+} from 'framer-motion';
+
+/** framer-motion + strict TS: animation props are valid at runtime */
+const motion = motionBase as typeof motionBase & Record<string, React.ComponentType<Record<string, unknown>>>;
 import { signIn } from 'next-auth/react';
 import { 
   Database, Network, Search, Zap, ArrowRight, GitBranch, 
@@ -332,11 +341,14 @@ export default function LandingPage() {
       {/* Animated background grid */}
       <motion.div
         className="fixed inset-0 opacity-[0.03] pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(59, 130, 246, 0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(59, 130, 246, 0.5) 1px, transparent 1px)',
-          backgroundSize: '50px 50px',
-          y: backgroundY
-        }}
+        style={
+          {
+            backgroundImage:
+              'linear-gradient(rgba(0, 229, 255, 0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 229, 255, 0.35) 1px, transparent 1px)',
+            backgroundSize: '50px 50px',
+            y: backgroundY,
+          } as MotionStyle
+        }
       />
 
       {/* Gradient orbs - More subtle */}

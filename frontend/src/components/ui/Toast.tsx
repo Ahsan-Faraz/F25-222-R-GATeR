@@ -17,11 +17,11 @@ export default function Toast() {
 }
 
 function ToastItem({ toast, onClose }: { toast: ToastMessage; onClose: () => void }) {
-  const bgColors = {
-    success: 'bg-success',
-    error: 'bg-error',
-    warning: 'bg-warning',
-    info: 'bg-info',
+  const accent = {
+    success: 'border-l-primary-container',
+    error: 'border-l-error',
+    warning: 'border-l-tertiary-container',
+    info: 'border-l-primary',
   };
 
   const icons = {
@@ -40,15 +40,15 @@ function ToastItem({ toast, onClose }: { toast: ToastMessage; onClose: () => voi
 
   return (
     <div
-      className={`${bgColors[toast.type]} text-white px-6 py-4 rounded-lg shadow-lg min-w-[300px] max-w-md animate-fade-in flex items-start gap-3`}
+      className={`glass-panel border border-outline-variant/20 ${accent[toast.type]} border-l-4 rounded-lg px-5 py-3.5 min-w-[300px] max-w-md animate-fade-in flex items-start gap-3 text-on-surface shadow-2xl`}
     >
-      <span className="text-2xl font-bold flex-shrink-0">{icons[toast.type]}</span>
+      <span className="text-lg font-bold flex-shrink-0 text-primary">{icons[toast.type]}</span>
       <div className="flex-1">
-        <p className="font-medium">{toast.message}</p>
+        <p className="text-sm font-medium leading-snug">{toast.message}</p>
       </div>
       <button
         onClick={onClose}
-        className="text-white hover:text-gray-200 flex-shrink-0 text-xl"
+        className="text-on-surface-variant hover:text-on-surface flex-shrink-0 text-lg leading-none"
         aria-label="Close"
       >
         ×

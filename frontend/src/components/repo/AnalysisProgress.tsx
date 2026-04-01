@@ -32,14 +32,14 @@ export default function AnalysisProgress() {
         <h4 className="text-sm font-semibold text-text-primary uppercase tracking-wider">
           Analysis Progress
         </h4>
-        <span className="font-mono text-accent text-sm">{percentage}%</span>
+        <span className="font-mono text-primary text-sm">{percentage}%</span>
       </div>
 
       {/* Progress Bar */}
       <div className="mb-6">
-        <div className="w-full bg-surface-active rounded-full h-1">
+        <div className="w-full bg-surface-container-highest rounded-full h-1">
           <div
-            className="bg-accent h-1 rounded-full transition-all duration-500 ease-out"
+            className="bg-primary-container h-1 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${percentage}%` }}
           />
         </div>
@@ -69,8 +69,8 @@ export default function AnalysisProgress() {
                   isCompleted
                     ? 'bg-green-600 text-white'
                     : isActive
-                    ? 'bg-accent text-white'
-                    : 'bg-surface-hover text-text-muted'
+                    ? 'bg-primary-container text-on-primary-container'
+                    : 'bg-surface-hover text-on-surface-variant'
                 }`}
               >
                 {isCompleted ? (
