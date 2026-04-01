@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import { getGraphStats } from '@/lib/api/knowledge-graph';
 import { getVectorStats, measureVectorSearchLatencyMs } from '@/lib/api/vectors';
 import { getKuzuStats } from '@/lib/api/kuzu';
 import { getGATRStatus } from '@/lib/api/gatr';
+import { getAccessToken } from '@/lib/api-client';
 import type { StatsCardMetric } from '@/components/ui/StatsCard';
 import type { UrgentIssueItem } from '@/components/ui/ActionCard';
 import type { StorageMetricRow } from '@/components/ui/StorageMetricsCard';
@@ -22,6 +24,7 @@ export interface DashboardBentoData {
 }
 
 export function useDashboardBentoData(repoLabel: string | null): DashboardBentoData {
+  const { status } = useSession();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statsMetrics, setStatsMetrics] = useState<StatsCardMetric[]>([]);
@@ -32,6 +35,12 @@ export function useDashboardBentoData(repoLabel: string | null): DashboardBentoD
   const [repairDetailLine, setRepairDetailLine] = useState('');
 
   const refresh = useCallback(async () => {
+    // Skip API calls if not authenticated or token not yet set
+    if (status !== 'authenticated' || !getAccessToken()) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     try {
@@ -178,11 +187,16 @@ export function useDashboardBentoData(repoLabel: string | null): DashboardBentoD
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [status]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    // Only refresh when authenticated and token is available
+    if (status === 'authenticated' && getAccessToken()) {
+      refresh();
+    } else if (status === 'unauthenticated') {
+      setLoading(false);
+    }
+  }, [status, refresh]);
 
   const versionTag = repoLabel || 'v1.2.0-rc4';
 

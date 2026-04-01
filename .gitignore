@@ -83,3 +83,5 @@ frontend/.env*.local
 # Package manager locks (optional - uncomment if not needed)
 # frontend/package-lock.json
 # frontend/yarn.lock
+
+.github/

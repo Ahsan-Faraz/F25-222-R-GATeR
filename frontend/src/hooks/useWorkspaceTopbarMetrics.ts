@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import { getVectorStats } from '@/lib/api/vectors';
 import { getGATRStatus } from '@/lib/api/gatr';
+import { getAccessToken } from '@/lib/api-client';
 
 const FALLBACK_EMB = '142,852 NODES';
 const FALLBACK_MODEL =
@@ -12,10 +14,16 @@ const FALLBACK_MODEL =
  * Top bar metrics (Stitch: Embeddings + Active Model) — same APIs as dashboard, cached lightly.
  */
 export function useWorkspaceTopbarMetrics() {
+  const { status } = useSession();
   const [embeddingsDisplay, setEmbeddingsDisplay] = useState(FALLBACK_EMB);
   const [activeModelDisplay, setActiveModelDisplay] = useState(FALLBACK_MODEL);
 
   useEffect(() => {
+    // Skip API calls if not authenticated or token not ready
+    if (status !== 'authenticated' || !getAccessToken()) {
+      return;
+    }
+    
     let cancelled = false;
     (async () => {
       try {
@@ -39,7 +47,7 @@ export function useWorkspaceTopbarMetrics() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [status]);
 
   return { embeddingsDisplay, activeModelDisplay };
 }

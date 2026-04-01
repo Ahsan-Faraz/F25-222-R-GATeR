@@ -73,12 +73,12 @@ export default function RepoManager() {
       const result = await addRepository(repoUrl);
       if (result.success && result.repo_info) {
         setCurrentRepo(result.repo_info);
-        showToast('success', result.message || `Repository ${result.repo_info.name} added successfully`);
         setRepoUrl('');
         
         if (result.needs_analysis) {
-          showToast('info', 'Starting analysis...');
-          setTimeout(() => handleAnalyze(), 500);
+          showToast('success', `Repository ${result.repo_info.name} added. Click "Analyze" to start analysis.`);
+        } else {
+          showToast('success', result.message || `Repository ${result.repo_info.name} loaded from local cache`);
         }
       } else {
         showToast('error', (result as any).error || 'Failed to add repository');

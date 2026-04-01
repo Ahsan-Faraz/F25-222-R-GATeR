@@ -134,6 +134,33 @@ def cleanup_gater():
 
 atexit.register(cleanup_gater)
 
+# Global error handlers to ensure JSON responses
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors with JSON response"""
+    logger.error(f"Internal Server Error: {error}")
+    return jsonify({
+        'error': 'Internal Server Error',
+        'message': str(error) if app.debug else 'An unexpected error occurred'
+    }), 500
+
+@app.errorhandler(404)
+def not_found_error(error):
+    """Handle 404 errors with JSON response"""
+    return jsonify({
+        'error': 'Not Found',
+        'message': 'The requested resource was not found'
+    }), 404
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle all unhandled exceptions with JSON response"""
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    return jsonify({
+        'error': 'Internal Server Error',
+        'message': str(error) if app.debug else 'An unexpected error occurred'
+    }), 500
+
 # Progress tracking functions
 def update_progress(step, step_name, step_description, details=None):
     """Update analysis progress"""
@@ -392,10 +419,12 @@ def analyze_repository():
         
         repo_identifier = f"{app_state['current_repo']['owner']}/{app_state['current_repo']['name']}"
         
-        # Set GitHub token for API access
-        token = session.get('oauth_token', {}).get('access_token')
+        # Set GitHub token for API access (check both Flask session and headers)
+        token = get_github_token()
         if token:
             gater.set_github_token(token)
+        else:
+            logger.warning("No GitHub token available - GitHub artifacts will be skipped")
         
         # Get skip_github_artifacts flag from request (default False for complete analysis)
         try:
@@ -448,8 +477,12 @@ def analyze_repository():
     except Exception as e:
         app_state['analysis_status'] = 'error'
         reset_progress()  # Reset progress on error
-        logger.error(f"Error analyzing repository: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error analyzing repository: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False,
+            'message': f'Analysis failed: {str(e)}'
+        }), 500
 
 @app.route('/repo/analysis-status')
 def analysis_status():
@@ -715,18 +748,87 @@ def get_knowledge_graph_data():
 
 @app.route('/export/<format>')
 def export_data(format):
-    """Export knowledge graph data"""
+    """Export knowledge graph data in various formats"""
+    from flask import send_file, Response
+    import csv
+    import io
+    
     try:
+        if not is_authenticated():
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Get all entities from knowledge graph
+        entities = []
+        for node_id in gater.kg_manager.graph.nodes():
+            node_data = dict(gater.kg_manager.graph.nodes[node_id])
+            node_data['id'] = node_id
+            entities.append(node_data)
+        
+        # Get all relationships
+        relationships = []
+        for source, target, edge_data in gater.kg_manager.graph.edges(data=True):
+            rel = dict(edge_data)
+            rel['source'] = source
+            rel['target'] = target
+            relationships.append(rel)
+        
         if format == 'jsonl':
-            # Export current snapshot
-            gater.kg_manager.export_snapshot(gater.kg_output_file)
-            return jsonify({
-                'success': True,
-                'message': 'Data exported to JSONL format',
-                'file': gater.kg_output_file
-            })
+            # Export as JSONL file (line-delimited JSON)
+            output = io.StringIO()
+            for entity in entities:
+                output.write(json.dumps(entity, default=str) + '\n')
+            for rel in relationships:
+                output.write(json.dumps(rel, default=str) + '\n')
+            
+            output.seek(0)
+            return Response(
+                output.getvalue(),
+                mimetype='application/x-ndjson',
+                headers={'Content-Disposition': 'attachment; filename=knowledge_graph.jsonl'}
+            )
+            
+        elif format == 'json':
+            # Export as single JSON file
+            export_data = {
+                'entities': entities,
+                'relationships': relationships,
+                'statistics': gater.kg_manager.get_statistics(),
+                'exported_at': datetime.now().isoformat()
+            }
+            return Response(
+                json.dumps(export_data, indent=2, default=str),
+                mimetype='application/json',
+                headers={'Content-Disposition': 'attachment; filename=knowledge_graph.json'}
+            )
+            
+        elif format == 'csv':
+            # Export entities as CSV
+            output = io.StringIO()
+            
+            if entities:
+                # Get all unique keys across all entities
+                all_keys = set()
+                for entity in entities:
+                    all_keys.update(entity.keys())
+                
+                # Sort keys for consistent column order
+                fieldnames = sorted(list(all_keys))
+                
+                writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                for entity in entities:
+                    # Convert non-string values to strings
+                    row = {k: str(v) if v is not None else '' for k, v in entity.items()}
+                    writer.writerow(row)
+            
+            output.seek(0)
+            return Response(
+                output.getvalue(),
+                mimetype='text/csv',
+                headers={'Content-Disposition': 'attachment; filename=knowledge_graph.csv'}
+            )
         else:
-            return jsonify({'error': 'Unsupported export format'}), 400
+            return jsonify({'error': f'Unsupported export format: {format}. Supported: json, jsonl, csv'}), 400
             
     except Exception as e:
         logger.error(f"Error exporting data: {e}")
