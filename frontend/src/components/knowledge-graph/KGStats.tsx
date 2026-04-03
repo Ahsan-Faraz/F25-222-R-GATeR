@@ -1,10 +1,10 @@
-// Knowledge Graph Statistics Component - Minimalist-Futurism Design
+// Knowledge Graph statistics — Stitch GATeR Obsidian (Knowledge Graph tab)
 
 import React, { useState, useEffect } from 'react';
 import { getGraphStats, clearKuzuDatabase } from '@/lib/api/knowledge-graph';
-import Card from '../ui/Card';
 import Button from '../ui/Button';
-import { Trash2, RefreshCw, AlertTriangle, Database, GitBranch, Box, Link2 } from 'lucide-react';
+import MaterialIcon from '../ui/MaterialIcon';
+import { Trash2, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface GraphStats {
   total_nodes?: number;
@@ -72,23 +72,28 @@ export default function KGStats() {
 
   if (loading && !stats) {
     return (
-      <Card title="Knowledge Graph">
-        <div className="space-y-3">
-          <div className="skeleton h-16 rounded-md" />
-          <div className="skeleton h-32 rounded-md" />
+      <div className="space-y-4 animate-fade-in">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="glass-panel rounded-lg border border-outline-variant/15 p-5">
+              <div className="skeleton h-4 w-24 rounded mb-3" />
+              <div className="skeleton h-8 w-20 rounded" />
+            </div>
+          ))}
         </div>
-      </Card>
+      </div>
     );
   }
 
   if (error && !stats) {
     return (
-      <Card title="Knowledge Graph">
-        <div className="text-center py-8">
-          <p className="text-red-400 mb-4 text-sm">{error}</p>
-          <Button onClick={loadStats} size="sm" variant="ghost">Retry</Button>
-        </div>
-      </Card>
+      <div className="rounded-lg border border-outline-variant/15 bg-surface-container-low p-8 text-center">
+        <MaterialIcon name="error" className="text-error mb-3 !text-[32px]" />
+        <p className="text-sm text-on-error-container mb-4 font-mono">{error}</p>
+        <Button onClick={loadStats} size="sm" variant="ghost">
+          Retry
+        </Button>
+      </div>
     );
   }
 
@@ -97,119 +102,146 @@ export default function KGStats() {
   const entityTypes = stats?.node_types ?? stats?.entity_types ?? {};
   const relationshipTypes = stats?.relationship_types ?? {};
 
+  const statTiles = [
+    {
+      icon: 'bubble_chart' as const,
+      label: 'Nodes',
+      value: nodeCount.toLocaleString(),
+      accent: 'text-primary/90',
+    },
+    {
+      icon: 'link' as const,
+      label: 'Edges',
+      value: edgeCount.toLocaleString(),
+      accent: 'text-secondary/90',
+    },
+    {
+      icon: 'category' as const,
+      label: 'Entity types',
+      value: String(Object.keys(entityTypes).length),
+      accent: 'text-tertiary/90',
+    },
+    {
+      icon: 'account_tree' as const,
+      label: 'Relationship kinds',
+      value: String(Object.keys(relationshipTypes).length),
+      accent: 'text-on-surface-variant',
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Messages */}
+    <div className="space-y-6 animate-fade-in">
       {successMessage && (
-        <div className="bg-green-900/20 border border-green-500/30 text-green-400 rounded-md px-4 py-3 text-sm flex items-center gap-2">
-          <span className="w-2 h-2 bg-green-500 rounded-full" />
-          {successMessage}
+        <div className="rounded-lg border border-outline-variant/15 bg-surface-container-low px-4 py-3 text-sm text-on-surface flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(195,245,255,0.45)]" />
+          <span className="font-mono text-xs">{successMessage}</span>
         </div>
       )}
       {error && (
-        <div className="bg-red-900/20 border border-red-500/30 text-red-400 rounded-md px-4 py-3 text-sm flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" />
-          {error}
+        <div className="rounded-lg border border-error/30 bg-error-container/20 px-4 py-3 text-sm text-on-error-container flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="font-mono text-xs">{error}</span>
         </div>
       )}
 
-      {/* Statistical Ribbon */}
-      <Card>
-        <div className="stat-ribbon">
-          <div className="stat-item">
-            <Box className="w-4 h-4 text-text-muted mb-1" />
-            <span className="stat-label">Nodes</span>
-            <span className="stat-value">{nodeCount.toLocaleString()}</span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {statTiles.map((t) => (
+          <div
+            key={t.label}
+            className="glass-panel rounded-lg border border-outline-variant/15 p-5 flex flex-col gap-2 transition-colors hover:border-outline-variant/25"
+          >
+            <div className="flex items-center gap-2 text-on-surface-variant/60">
+              <MaterialIcon name={t.icon} className={`!text-[20px] ${t.accent}`} />
+              <span className="text-[10px] font-mono uppercase tracking-widest">{t.label}</span>
+            </div>
+            <p className="text-2xl sm:text-3xl font-mono font-semibold text-on-surface tracking-tight">{t.value}</p>
           </div>
-          <div className="stat-item">
-            <Link2 className="w-4 h-4 text-text-muted mb-1" />
-            <span className="stat-label">Edges</span>
-            <span className="stat-value">{edgeCount.toLocaleString()}</span>
-          </div>
-          <div className="stat-item">
-            <Database className="w-4 h-4 text-text-muted mb-1" />
-            <span className="stat-label">Entity Types</span>
-            <span className="stat-value">{Object.keys(entityTypes).length}</span>
-          </div>
-          <div className="stat-item">
-            <GitBranch className="w-4 h-4 text-text-muted mb-1" />
-            <span className="stat-label">Relationships</span>
-            <span className="stat-value">{Object.keys(relationshipTypes).length}</span>
-          </div>
-        </div>
-      </Card>
+        ))}
+      </div>
 
-      {/* Entity Types */}
       {Object.keys(entityTypes).length > 0 && (
-        <Card title="Entity Types">
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {Object.entries(entityTypes).map(([type, count]) => (
-              <div key={type} className="bg-surface-elevated border border-border rounded-md px-3 py-2">
-                <div className="text-lg font-mono font-semibold text-text-primary">{count}</div>
-                <div className="text-xs text-text-muted uppercase tracking-wider truncate">{type.replace(/_/g, ' ')}</div>
-              </div>
-            ))}
+        <div className="rounded-lg border border-outline-variant/10 bg-surface-container-lowest overflow-hidden">
+          <div className="px-5 py-4 border-b border-outline-variant/10">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/80">
+              Entity types
+            </h3>
           </div>
-        </Card>
+          <div className="p-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {Object.entries(entityTypes).map(([type, count]) => (
+                <div
+                  key={type}
+                  className="rounded-lg border border-outline-variant/10 bg-surface-container-low px-3 py-3 transition-colors hover:bg-surface-container-high"
+                >
+                  <div className="text-lg font-mono font-semibold text-on-surface">{count}</div>
+                  <div className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider truncate mt-1">
+                    {type.replace(/_/g, ' ')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Relationship Types */}
       {Object.keys(relationshipTypes).length > 0 && (
-        <Card title="Relationship Types">
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {Object.entries(relationshipTypes).map(([type, count]) => (
-              <div key={type} className="bg-surface-elevated border border-border rounded-md px-3 py-2">
-                <div className="text-lg font-mono font-semibold text-text-primary">{count}</div>
-                <div className="text-xs text-text-muted uppercase tracking-wider truncate">{type.replace(/_/g, ' ')}</div>
-              </div>
-            ))}
+        <div className="rounded-lg border border-outline-variant/10 bg-surface-container-lowest overflow-hidden">
+          <div className="px-5 py-4 border-b border-outline-variant/10">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/80">
+              Relationship types
+            </h3>
           </div>
-        </Card>
+          <div className="p-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {Object.entries(relationshipTypes).map(([type, count]) => (
+                <div
+                  key={type}
+                  className="rounded-lg border border-outline-variant/10 bg-surface-container-low px-3 py-3 transition-colors hover:bg-surface-container-high"
+                >
+                  <div className="text-lg font-mono font-semibold text-on-surface">{count}</div>
+                  <div className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider truncate mt-1">
+                    {type.replace(/_/g, ' ')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Actions */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           {!showClearConfirm ? (
-            <Button 
-              onClick={() => setShowClearConfirm(true)} 
-              size="sm" 
-              variant="ghost"
-              className="text-red-400 hover:text-red-300 hover:border-red-400/50"
-              icon={<Trash2 className="w-4 h-4" />}
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(true)}
+              className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-error border border-outline-variant/20 rounded-lg px-4 py-2 hover:bg-error-container/10 hover:border-error/30 transition-colors"
             >
-              Clear Database
-            </Button>
+              <Trash2 className="w-4 h-4" />
+              Clear database
+            </button>
           ) : (
-            <div className="flex items-center gap-2 bg-red-900/20 border border-red-500/30 rounded-md px-3 py-2">
-              <AlertTriangle className="w-4 h-4 text-red-400" />
-              <span className="text-sm text-red-400">Delete all data?</span>
-              <Button 
-                onClick={handleClearDatabase} 
-                size="sm" 
-                variant="danger"
-                loading={clearing}
-              >
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-error/25 bg-error-container/15 px-4 py-3">
+              <AlertTriangle className="w-4 h-4 text-on-error-container shrink-0" />
+              <span className="text-sm text-on-error-container font-mono">Delete all graph data?</span>
+              <Button onClick={handleClearDatabase} size="sm" variant="danger" loading={clearing}>
                 Confirm
               </Button>
-              <Button 
-                onClick={() => setShowClearConfirm(false)} 
-                size="sm" 
-                variant="ghost"
-              >
+              <Button onClick={() => setShowClearConfirm(false)} size="sm" variant="ghost">
                 Cancel
               </Button>
             </div>
           )}
         </div>
-        <Button 
-          onClick={loadStats} 
-          size="sm" 
-          variant="ghost" 
+        <Button
+          onClick={loadStats}
+          size="sm"
+          variant="ghost"
           loading={loading}
+          className="border-outline-variant/20 self-start sm:self-auto"
           icon={<RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />}
         >
-          Refresh
+          Refresh stats
         </Button>
       </div>
     </div>

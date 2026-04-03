@@ -13,8 +13,7 @@ export default function WorkspaceSectionHeader() {
   const section = (router.query.section as WorkspaceSectionId) || 'repo';
   const meta = WORKSPACE_NAV_ITEMS.find((i) => i.id === section);
 
-  const title =
-    section === 'repo' ? 'Workspace Dashboard' : (meta?.label ?? 'Workspace');
+  const title = meta?.label ?? 'Workspace';
 
   const repoLine = currentRepo
     ? `${currentRepo.owner}/${currentRepo.name}`

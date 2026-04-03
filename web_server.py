@@ -28,6 +28,8 @@ from src.vector_storage.lightweight_vector_storage import LightweightVectorStora
 # Load environment variables
 load_dotenv()
 
+os.makedirs("workspace/logs", exist_ok=True)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

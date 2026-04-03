@@ -1,11 +1,11 @@
-// GATR Test Repair Panel - Minimalist-Futurism Design
+// Stitch screen `1c1c09567db14e808d96748bba31c9bf` — Test Repair View (API logic unchanged)
 
 import React, { useState, useEffect } from 'react';
 import { repairTest, getGATRStatus, getTestContext, type GATREngineStatus } from '@/lib/api/gatr';
-import Card from '../ui/Card';
 import Button from '../ui/Button';
 import DiffViewer from '../ui/DiffViewer';
-import { Wrench, Search, Loader2, Check, X, AlertTriangle, Server, Database, Cpu, Clock, Zap } from 'lucide-react';
+import MaterialIcon from '../ui/MaterialIcon';
+import { Loader2, X, AlertTriangle } from 'lucide-react';
 
 interface RepairState {
   repairId: string | null;
@@ -14,12 +14,36 @@ interface RepairState {
   result: any;
 }
 
+type StepKey = 'input' | 'retrieval' | 'llm' | 'review';
+
+function stepActive(s: StepKey, repairState: RepairState, hasContext: boolean): 'done' | 'active' | 'pending' {
+  if (repairState.status === 'processing') {
+    if (s === 'input') return 'done';
+    if (s === 'retrieval') return 'active';
+    return 'pending';
+  }
+  if (repairState.status === 'completed' || repairState.status === 'failed') {
+    if (s === 'review') return repairState.status === 'completed' ? 'done' : 'active';
+    if (s === 'llm') return 'done';
+    if (s === 'retrieval') return 'done';
+    if (s === 'input') return 'done';
+  }
+  if (hasContext && repairState.status === 'idle') {
+    if (s === 'input') return 'done';
+    if (s === 'retrieval') return 'done';
+    if (s === 'llm') return 'pending';
+    return 'pending';
+  }
+  if (s === 'input') return 'active';
+  return 'pending';
+}
+
 export default function GATRPanel() {
   const [testCode, setTestCode] = useState('');
   const [testName, setTestName] = useState('');
   const [testFile, setTestFile] = useState('');
   const [testClass, setTestClass] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');  // REQUIRED field
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engineStatus, setEngineStatus] = useState<GATREngineStatus | null>(null);
@@ -31,7 +55,6 @@ export default function GATRPanel() {
   });
   const [context, setContext] = useState<any>(null);
 
-  // Fetch GATR engine status on mount
   useEffect(() => {
     const fetchStatus = async () => {
       try {
@@ -45,7 +68,6 @@ export default function GATRPanel() {
     fetchStatus();
   }, []);
 
-  // Backend API is SYNCHRONOUS - no polling needed
   const handleRepair = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!testCode.trim()) {
@@ -67,7 +89,6 @@ export default function GATRPanel() {
     });
 
     try {
-      // Repair is SYNCHRONOUS - result comes back immediately
       const result = await repairTest({
         test_code: testCode,
         test_name: testName || 'unknown_test',
@@ -77,15 +98,17 @@ export default function GATRPanel() {
         include_debug_trace: true,
       });
 
+      const errMsg =
+        typeof result.error === 'string' ? result.error : result.error != null ? String(result.error) : 'Repair failed';
       setRepairState({
-        repairId: result.repair_id ?? null,
+        repairId: typeof result.repair_id === 'string' ? result.repair_id : null,
         status: result.success ? 'completed' : 'failed',
-        message: result.success ? 'Repair completed!' : (result.error || 'Repair failed'),
+        message: result.success ? 'Repair completed!' : errMsg,
         result: result,
       });
     } catch (err: any) {
       setError(err.message || 'Repair failed');
-      setRepairState(prev => ({ ...prev, status: 'failed', message: err.message }));
+      setRepairState((prev) => ({ ...prev, status: 'failed', message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -127,336 +150,318 @@ export default function GATRPanel() {
   };
 
   const llmAvailable = engineStatus?.llm?.available;
-  const llmError = engineStatus?.llm?.error;
+  const hasContext = !!context;
+  const conf = repairState.result?.confidence != null ? Number(repairState.result.confidence) : null;
+
+  const steps: { key: StepKey; label: string; icon: string }[] = [
+    { key: 'input', label: 'Input', icon: 'data_object' },
+    { key: 'retrieval', label: 'Retrieval', icon: 'search_insights' },
+    { key: 'llm', label: 'LLM Inference', icon: 'auto_awesome' },
+    { key: 'review', label: 'Review Diff', icon: 'difference' },
+  ];
+
+  const kgEntities = context?.kg_entities?.slice(0, 4) || [];
+  const vecHint =
+    context?.vector_results?.[0]?.score ?? context?.vector_results?.[0]?._distance;
 
   return (
-    <div className="space-y-6">
-      {/* Engine Status */}
-      {engineStatus && (
-        <div className="stat-ribbon">
-          <div className="stat-item">
-            <span className={`inline-flex items-center gap-1.5 ${engineStatus.available ? 'text-green-400' : 'text-red-400'}`}>
-              <span className={`w-2 h-2 rounded-full ${engineStatus.available ? 'bg-green-400' : 'bg-red-400'}`} />
-              <span className="stat-value">{engineStatus.available ? 'Online' : 'Offline'}</span>
-            </span>
-            <span className="stat-label">Engine</span>
-          </div>
-          <div className="stat-item">
-            <span className={`stat-value ${llmAvailable ? 'text-green-400' : 'text-amber-400'}`}>
-              {llmAvailable ? (engineStatus.llm?.model || 'Ready') : 'N/A'}
-            </span>
-            <span className="stat-label">LLM</span>
-          </div>
-          {engineStatus.databases?.kuzu && (
-            <div className="stat-item">
-              <span className="stat-value">{engineStatus.databases.kuzu.entities || 0}</span>
-              <span className="stat-label">KG Entities</span>
-            </div>
-          )}
-          {engineStatus.databases?.lancedb && (
-            <div className="stat-item">
-              <span className="stat-value">{engineStatus.databases.lancedb.embeddings || 0}</span>
-              <span className="stat-label">Vectors</span>
-            </div>
+    <form id="gatr-repair-form" onSubmit={handleRepair} className="space-y-8 animate-fade-in">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4">
+        <div>
+          <nav className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-on-surface-variant/50 mb-2 font-semibold">
+            <span>Pipelines</span>
+            <MaterialIcon name="chevron_right" className="!text-[12px]" />
+            <span className="text-primary">Repair Agent</span>
+          </nav>
+          <h1 className="text-2xl md:text-3xl font-headline font-bold text-on-surface tracking-tight">Test Repair View</h1>
+          {engineStatus && (
+            <p className="text-[11px] font-mono text-on-surface-variant mt-2">
+              Engine {engineStatus.available ? 'online' : 'offline'}
+              {engineStatus.llm?.model ? ` · ${engineStatus.llm.model}` : ''}
+            </p>
           )}
         </div>
-      )}
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={resetRepair}
+            className="px-4 py-2 bg-surface-container-high border border-outline-variant/20 rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors flex items-center gap-2"
+          >
+            <MaterialIcon name="history" className="!text-[18px]" />
+            Reset
+          </button>
+          <button
+            type="submit"
+            disabled={loading || repairState.status === 'processing' || !engineStatus?.available}
+            className="px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-bold shadow-lg shadow-primary/10 hover:brightness-110 transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            {loading || repairState.status === 'processing' ? (
+              <Loader2 className="w-[18px] h-[18px] animate-spin" />
+            ) : (
+              <MaterialIcon name="play_arrow" className="!text-[18px]" />
+            )}
+            Run Repair
+          </button>
+        </div>
+      </header>
 
-      {/* LLM Warning */}
       {!llmAvailable && engineStatus && (
-        <div className="bg-amber-900/20 border border-amber-500/30 text-amber-400 rounded-md px-4 py-3 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+        <div className="rounded-lg border border-amber-500/30 bg-amber-900/15 px-4 py-3 flex items-start gap-3 text-amber-200 text-sm">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium text-sm">LLM Not Available</p>
-            <p className="text-xs text-amber-300/70 mt-1">
-              Test repair requires an LLM. Start LM Studio or Ollama with the configured model.
-              Provider: {engineStatus.llm?.provider || 'lm_studio'}
+            <p className="font-medium">LLM not available</p>
+            <p className="text-xs text-amber-200/80 mt-1">
+              Start Ollama or LM Studio. Provider: {engineStatus.llm?.provider || 'lm_studio'}
             </p>
           </div>
         </div>
       )}
 
-      <Card title="Test Repair">
-        <div className="space-y-5">
-          <p className="text-sm text-text-secondary">
-            Paste your failing test code and error message to get AI-powered repair suggestions.
-          </p>
+      <div className="flex items-center justify-between mb-2 relative px-2 overflow-x-auto pb-2">
+        <div className="absolute top-1/2 left-0 w-full h-px bg-outline-variant/20 -z-10 pointer-events-none" />
+        {steps.map((s) => {
+          const st = stepActive(s.key, repairState, hasContext);
+          const dim = st === 'pending';
+          return (
+            <div key={s.key} className="flex flex-col items-center gap-2 bg-[#131315] px-3 shrink-0">
+              <div
+                className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${
+                  st === 'done'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : st === 'active'
+                      ? 'border-primary bg-primary/20 text-primary'
+                      : 'border-outline-variant/40 bg-surface-container-low text-on-surface-variant'
+                }`}
+              >
+                <MaterialIcon name={s.icon} className="!text-[20px]" />
+              </div>
+              <span
+                className={`text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
+                  dim ? 'text-on-surface-variant' : 'text-on-surface'
+                }`}
+              >
+                {s.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
 
-          <form onSubmit={handleRepair} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-                  Test Name
-                </label>
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
+          <section className="bg-surface-container-low rounded-lg border border-outline-variant/10 overflow-hidden">
+            <div className="px-4 py-3 bg-surface-container flex justify-between items-center border-b border-outline-variant/10">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-primary flex items-center gap-2">
+                <MaterialIcon name="account_tree" className="!text-[16px]" />
+                Retrieval Context
+              </h3>
+              <span className="text-[10px] font-mono text-on-surface-variant">
+                {kgEntities.length} nodes
+              </span>
+            </div>
+            <div className="p-4 space-y-4">
+              {kgEntities.length === 0 && !hasContext && (
+                <p className="text-[11px] text-on-surface-variant">
+                  Run <span className="text-primary font-mono">Get context</span> after entering test code to load KG
+                  entities.
+                </p>
+              )}
+              {kgEntities.map((entity: any, i: number) => (
+                <div
+                  key={i}
+                  className={`p-3 bg-surface-container-highest rounded border ${
+                    i === 0 ? 'border-primary/20' : 'border-outline-variant/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary text-[9px] font-bold font-mono">
+                      {(entity.type || 'NODE').toString().toUpperCase().slice(0, 8)}
+                    </span>
+                    <span className="text-xs font-mono font-medium text-on-surface truncate">
+                      {entity.name || entity.id}
+                    </span>
+                  </div>
+                  {entity.file && (
+                    <p className="text-[10px] text-on-surface-variant font-mono truncate">{entity.file}</p>
+                  )}
+                </div>
+              ))}
+
+              <div className="relative h-36 mt-2 rounded bg-[#0e0e0f] overflow-hidden border border-outline-variant/10">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary/60 bg-surface/80 px-3 py-1 rounded-full backdrop-blur-sm">
+                    Live KG Explorer
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-surface-container-low rounded-lg border border-outline-variant/10 p-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-4">Vector Similarity</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-[10px] font-mono">
+                <span className="text-on-surface-variant">Top match</span>
+                <span className="text-primary">{vecHint != null ? Number(vecHint).toFixed(4) : '—'}</span>
+              </div>
+              <div className="w-full h-1 bg-surface-container-high rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-secondary transition-all"
+                  style={{ width: `${Math.min(100, (vecHint != null ? Number(vecHint) : 0) * 100)}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-on-surface-variant italic leading-snug">
+                {hasContext
+                  ? 'Context retrieved via hybrid search and graph entities.'
+                  : 'Context appears after loading retrieval.'}
+              </p>
+            </div>
+          </section>
+
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={handleGetContext}
+              disabled={loading || !engineStatus?.available}
+              className="w-full py-2.5 border border-outline-variant/30 rounded-lg text-sm font-medium hover:bg-surface-container-low transition-colors"
+            >
+              Get context only
+            </button>
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-8 space-y-6">
+          <section className="bg-surface-container-low rounded-lg border border-error/20 overflow-hidden">
+            <div className="px-4 py-3 bg-error-container/10 flex justify-between items-center border-b border-error/10 flex-wrap gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-error flex items-center gap-2">
+                <MaterialIcon name="bug_report" className="!text-[16px]" />
+                Broken Test Code
+              </h3>
+              <div className="flex gap-2 text-[10px] font-mono text-error/70">
+                <span>{testFile || 'test_file.py'}</span>
+              </div>
+            </div>
+            <div className="p-4 space-y-3 bg-[#0e0e0f]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <input
-                  type="text"
                   value={testName}
                   onChange={(e) => setTestName(e.target.value)}
-                  placeholder="test_function_name"
-                  className="ghost-input w-full"
+                  placeholder="test_name"
+                  className="ghost-input bg-surface-container-lowest font-mono"
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-                  Test File Path
-                </label>
                 <input
-                  type="text"
                   value={testFile}
                   onChange={(e) => setTestFile(e.target.value)}
-                  placeholder="tests/test_example.py"
-                  className="ghost-input w-full"
+                  placeholder="path/to/test.py"
+                  className="ghost-input bg-surface-container-lowest font-mono"
+                />
+                <input
+                  value={testClass}
+                  onChange={(e) => setTestClass(e.target.value)}
+                  placeholder="TestClass (optional)"
+                  className="ghost-input bg-surface-container-lowest font-mono sm:col-span-2"
                 />
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-                Test Class <span className="text-text-muted">(Optional)</span>
-              </label>
-              <input
-                type="text"
-                value={testClass}
-                onChange={(e) => setTestClass(e.target.value)}
-                placeholder="TestClassName"
-                className="ghost-input w-full"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-                Test Code <span className="text-red-400">*</span>
-              </label>
               <textarea
                 value={testCode}
                 onChange={(e) => setTestCode(e.target.value)}
-                placeholder={`def test_example():\n    result = my_function(arg1, arg2)\n    assert result == expected_value`}
-                className="ghost-input w-full font-mono text-sm text-green-400"
+                placeholder="Paste failing test…"
                 rows={8}
+                className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[160px] focus:outline-none focus:border-primary/40"
               />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-                Error Message <span className="text-red-400">*</span>
-              </label>
               <textarea
                 value={errorMessage}
                 onChange={(e) => setErrorMessage(e.target.value)}
-                placeholder={`AssertionError: Expected 42 but got 0`}
-                className="ghost-input w-full font-mono text-sm text-red-400"
-                rows={4}
+                placeholder="Paste traceback / assertion error…"
+                rows={3}
+                className="w-full font-mono text-[12px] p-3 rounded border border-error/20 bg-error-container/5 text-error/90 resize-y focus:outline-none"
               />
             </div>
+          </section>
 
-            <div className="flex gap-3 pt-2">
-              <Button 
-                type="submit" 
-                loading={loading} 
-                disabled={repairState.status === 'processing' || !engineStatus?.available}
-                icon={<Wrench className="w-4 h-4" />}
-              >
-                Repair Test
-              </Button>
-              <Button 
-                type="button" 
-                onClick={handleGetContext} 
-                variant="ghost" 
-                disabled={loading || !engineStatus?.available}
-                icon={<Search className="w-4 h-4" />}
-              >
-                Get Context Only
-              </Button>
-              {repairState.status !== 'idle' && (
-                <Button type="button" onClick={resetRepair} variant="ghost" className="ml-auto">
-                  Reset
-                </Button>
-              )}
+          <div className="flex justify-center -my-2 relative z-10">
+            <div className="bg-surface border border-outline-variant/20 p-2 rounded-full shadow-lg">
+              <MaterialIcon name="keyboard_double_arrow_down" className="text-primary !text-[20px]" />
             </div>
-          </form>
+          </div>
+
+          {repairState.status === 'processing' && (
+            <div className="flex items-center gap-3 p-4 rounded-lg border border-outline-variant/15 bg-surface-container-low">
+              <Loader2 className="w-6 h-6 text-primary animate-spin shrink-0" />
+              <p className="text-sm text-on-surface-variant">{repairState.message}</p>
+            </div>
+          )}
+
+          {repairState.result?.success && (
+            <section className="bg-surface-container-low rounded-lg border border-primary/20 overflow-hidden shadow-2xl shadow-primary/5">
+              <div className="px-4 py-3 bg-primary-container/10 flex justify-between items-center border-b border-primary/10 flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-primary flex items-center gap-2">
+                    <MaterialIcon name="verified" className="!text-[16px]" />
+                    Repaired Output
+                  </h3>
+                  <div className="h-4 w-px bg-outline-variant/20 hidden sm:block" />
+                  <span className="text-[10px] font-mono text-on-surface-variant">
+                    Confidence: {conf != null ? `${(conf * 100).toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+              </div>
+              {repairState.result.repaired_code && (
+                <pre className="font-mono text-[13px] p-4 overflow-x-auto text-on-surface-variant bg-[#0e0e0f] border-b border-outline-variant/10 whitespace-pre-wrap">
+                  {repairState.result.repaired_code}
+                </pre>
+              )}
+              {repairState.result.diff_content && testCode && (
+                <div className="p-4 border-t border-outline-variant/10">
+                  <p className="text-[10px] font-mono uppercase text-on-surface-variant mb-2">Diff</p>
+                  <div className="border border-outline-variant/10 rounded overflow-hidden">
+                    <DiffViewer original={testCode} modified={repairState.result.repaired_code || ''} />
+                  </div>
+                </div>
+              )}
+              {repairState.result.repair_strategy && (
+                <div className="m-4 p-4 bg-surface-container-highest border border-primary/10 rounded flex items-start gap-4">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <MaterialIcon name="info" className="text-primary !text-[18px]" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-on-surface mb-1 uppercase tracking-wider">Reasoning</h4>
+                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                      Strategy: <code className="bg-[#0e0e0f] px-1 rounded text-tertiary">{repairState.result.repair_strategy}</code>
+                    </p>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {repairState.result && !repairState.result.success && (
+            <div className="flex items-center gap-3 p-4 rounded-lg border border-error/30 bg-error-container/10">
+              <X className="w-6 h-6 text-error shrink-0" />
+              <div>
+                <p className="font-semibold text-on-surface">Repair failed</p>
+                <p className="text-sm text-error/90 mt-1">{repairState.result.error || repairState.message}</p>
+              </div>
+            </div>
+          )}
 
           {error && (
-            <div className="bg-red-900/20 border border-red-500/30 text-red-400 rounded-md px-4 py-3 text-sm">
+            <div className="text-sm text-error border border-error/30 rounded-lg px-4 py-3 bg-error-container/10">
               {error}
             </div>
           )}
+
+          <div className="flex justify-end gap-4 pt-2">
+            <Button type="button" variant="ghost" onClick={resetRepair}>
+              Regenerate
+            </Button>
+            <Button type="submit" loading={loading} disabled={!engineStatus?.available}>
+              Run repair
+            </Button>
+          </div>
         </div>
-      </Card>
-
-      {/* Processing */}
-      {repairState.status === 'processing' && (
-        <Card title="Processing">
-          <div className="flex items-center gap-4">
-            <Loader2 className="w-6 h-6 text-accent animate-spin" />
-            <div>
-              <div className="font-medium text-text-primary">{repairState.message}</div>
-              <div className="text-sm text-text-muted mt-1">This may take a minute...</div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Context */}
-      {context && (
-        <Card title="Retrieved Context">
-          <div className="space-y-4">
-            {context.kg_entities && context.kg_entities.length > 0 && (
-              <div>
-                <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                  Knowledge Graph Entities ({context.kg_entities.length})
-                </h5>
-                <div className="space-y-2">
-                  {context.kg_entities.slice(0, 5).map((entity: any, i: number) => (
-                    <div key={i} className="bg-surface-elevated border border-border rounded-md p-3">
-                      <div className="font-mono text-sm text-text-primary">{entity.name || entity.id}</div>
-                      <div className="text-xs text-text-muted mt-1">{entity.type} • {entity.file}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {context.vector_results && context.vector_results.length > 0 && (
-              <div>
-                <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                  Vector Results ({context.vector_results.length})
-                </h5>
-                <div className="space-y-2">
-                  {context.vector_results.slice(0, 5).map((result: any, i: number) => (
-                    <div key={i} className="bg-surface-elevated border border-border rounded-md p-3">
-                      <div className="font-mono text-sm text-text-primary">{result.name || result.id}</div>
-                      <div className="text-xs text-text-muted mt-1">Score: {(result.score || result._distance || 0).toFixed(3)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {context.compressed_context && (
-              <div>
-                <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                  Compressed Context
-                </h5>
-                <pre className="text-xs bg-bg border border-border text-green-400 p-4 rounded-md overflow-x-auto font-mono whitespace-pre-wrap">
-                  {context.compressed_context}
-                </pre>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* Results */}
-      {repairState.result && (
-        <Card title="Repair Results">
-          <div className="space-y-6">
-            {repairState.result.success ? (
-              <>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-green-900/30 border border-green-500/30 rounded-md flex items-center justify-center">
-                    <Check className="w-5 h-5 text-green-400" />
-                  </div>
-                  <div>
-                    <span className="font-semibold text-text-primary">Repair Successful</span>
-                    <div className="flex gap-2 mt-1">
-                      {repairState.result.confidence != null && (
-                        <span className="text-xs bg-green-900/30 border border-green-500/30 text-green-400 px-2 py-0.5 rounded font-mono">
-                          {(repairState.result.confidence * 100).toFixed(1)}%
-                        </span>
-                      )}
-                      {repairState.result.repair_strategy && (
-                        <span className="text-xs bg-accent/20 border border-accent/30 text-accent px-2 py-0.5 rounded font-mono">
-                          {repairState.result.repair_strategy}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Metadata */}
-                {repairState.result.repair_method && (
-                  <div className="stat-ribbon">
-                    <div className="stat-item">
-                      <span className="stat-value">{repairState.result.repair_method}</span>
-                      <span className="stat-label">Method</span>
-                    </div>
-                    {repairState.result.llm_used && (
-                      <div className="stat-item">
-                        <span className="stat-value text-purple-400">Yes</span>
-                        <span className="stat-label">LLM Used</span>
-                      </div>
-                    )}
-                    {repairState.result.processing_time && (
-                      <div className="stat-item">
-                        <span className="stat-value">{repairState.result.processing_time.toFixed(2)}s</span>
-                        <span className="stat-label">Time</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Repaired Code */}
-                {repairState.result.repaired_code && (
-                  <div>
-                    <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                      Repaired Code
-                    </h5>
-                    <pre className="text-sm bg-bg text-green-400 p-4 rounded-md overflow-x-auto border border-green-500/20 font-mono">
-                      {repairState.result.repaired_code}
-                    </pre>
-                  </div>
-                )}
-
-                {/* Diff */}
-                {repairState.result.diff_content && (
-                  <div>
-                    <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                      Changes
-                    </h5>
-                    <div className="border border-border rounded-md overflow-hidden">
-                      <DiffViewer
-                        original={testCode}
-                        modified={repairState.result.repaired_code || ''}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Pipeline Progress */}
-                {repairState.result.pipeline_progress && Object.keys(repairState.result.pipeline_progress).length > 0 && (
-                  <div>
-                    <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-                      Pipeline
-                    </h5>
-                    <div className="space-y-1">
-                      {Object.entries(repairState.result.pipeline_progress).map(([step, info]: [string, any]) => (
-                        <div key={step} className="flex justify-between items-center py-2 border-b border-border last:border-b-0">
-                          <span className="text-sm text-text-secondary">{step}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded ${info.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-                            {info.success ? 'Done' : 'Failed'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-red-900/30 border border-red-500/30 rounded-md flex items-center justify-center">
-                  <X className="w-5 h-5 text-red-400" />
-                </div>
-                <div>
-                  <span className="font-semibold text-text-primary">Repair Failed</span>
-                  {repairState.result.error && (
-                    <p className="text-sm text-red-400 mt-1">{repairState.result.error}</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-    </div>
+      </div>
+    </form>
   );
 }

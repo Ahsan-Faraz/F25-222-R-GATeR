@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import Button from '../ui/Button';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 
 export default function Header() {
   const { data: session } = useSession();
@@ -17,13 +18,8 @@ export default function Header() {
     <header className="bg-[#0e0e0f] border-b border-outline-variant/15 sticky top-0 z-50">
       <div className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="text-lg font-headline font-bold text-primary tracking-tight leading-none">
-              GATeR
-              <span className="block text-[10px] font-mono text-on-surface-variant/60 tracking-widest uppercase mt-1">
-                Workspace
-              </span>
-            </div>
+          <div className="flex items-center">
+            <SiteLogoMark size={36} priority />
           </div>
 
           <div className="flex items-center gap-6">

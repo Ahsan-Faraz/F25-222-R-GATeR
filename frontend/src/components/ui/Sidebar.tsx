@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 import type { Session } from 'next-auth';
 import MaterialIcon from '@/components/ui/MaterialIcon';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 import { WORKSPACE_NAV_ITEMS, WorkspaceSectionId } from '@/components/layout/workspace-nav';
 
 export interface SidebarProps {
@@ -18,19 +19,9 @@ export default function Sidebar({ session, activeSection, navHref }: SidebarProp
   return (
     <aside className="flex flex-col h-screen w-64 fixed left-0 top-0 bg-[#0e0e0f] border-r border-outline-variant/15 z-50 py-6">
       <div className="px-6 mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-primary-container flex items-center justify-center">
-            <MaterialIcon name="hub" className="text-on-primary-container !text-[20px]" filled />
-          </div>
-          <div>
-            <h1 className="text-[#c3f5ff] font-bold font-headline tracking-tighter leading-none">
-              GATeR Workspace
-            </h1>
-            <p className="text-[10px] text-on-surface-variant/60 uppercase tracking-widest mt-1">
-              Graph-Aware Repair
-            </p>
-          </div>
-        </div>
+        <Link href="/workspace" className="inline-flex focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded" aria-label="Workspace home">
+          <SiteLogoMark size={36} priority />
+        </Link>
       </div>
 
       <nav className="flex-1 flex flex-col font-inter text-sm overflow-y-auto custom-scrollbar">

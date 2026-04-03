@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 import { useRouter } from 'next/router';
 import type { GetServerSideProps } from 'next';
 
@@ -39,6 +40,9 @@ export default function AuthErrorPage({
 
   return (
     <div className="min-h-screen bg-surface-container-lowest flex flex-col items-center justify-center p-8 text-center">
+      <div className="mb-6">
+        <SiteLogoMark size={80} priority />
+      </div>
       <h1 className="text-xl font-headline font-bold text-on-surface mb-2">Authentication error</h1>
       <p className="text-sm text-on-surface-variant max-w-md mb-6">{message}</p>
 

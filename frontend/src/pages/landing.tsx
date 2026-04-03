@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { signIn } from 'next-auth/react';
 import StitchMarketingTopNav from '@/components/stitch/StitchMarketingTopNav';
 import StitchMarketingFooter from '@/components/stitch/StitchMarketingFooter';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 
 function MaterialIcon({ name, className = '' }: { name: string; className?: string }) {
   return <span className={`material-symbols-outlined ${className}`.trim()}>{name}</span>;
@@ -15,10 +16,13 @@ export default function LandingPage() {
         <title>GATeR — Graph-Aware Test Repair</title>
       </Head>
       <div className="font-body text-on-surface selection:bg-primary/30 selection:text-primary overflow-x-hidden">
-        <StitchMarketingTopNav active="pipeline" />
+        <StitchMarketingTopNav active="none" />
         <main className="pt-16">
           <section className="min-h-[819px] flex flex-col items-center justify-center text-center px-6 relative overflow-hidden">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_-20%,_#c3f5ff15,_transparent_50%)] pointer-events-none" />
+            <div className="mb-6 flex justify-center">
+              <SiteLogoMark size={64} priority />
+            </div>
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-surface-container-low border border-outline-variant/20 mb-8">
               <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(195,245,255,0.6)]" />
               <span className="font-mono text-[10px] uppercase tracking-widest text-primary">
@@ -26,7 +30,7 @@ export default function LandingPage() {
               </span>
             </div>
             <h1 className="font-headline text-5xl md:text-7xl font-extrabold tracking-tighter text-on-surface mb-6 max-w-4xl">
-              GATeR — Graph-Aware <br />{' '}
+              Graph-Aware <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">
                 Test Repair
               </span>

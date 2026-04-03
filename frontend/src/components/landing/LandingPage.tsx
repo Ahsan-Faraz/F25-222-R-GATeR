@@ -1,6 +1,7 @@
 // Premium Landing Page - Cyber/Technical Aesthetic with Framer Motion
 
 import React, { useEffect, useRef } from 'react';
+import Link from 'next/link';
 import {
   motion as motionBase,
   useScroll,
@@ -17,6 +18,7 @@ import {
   Shield, Check, Mail,
   Code2, Brain, Eye, Sparkles, ChevronRight, Circle
 } from 'lucide-react';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 
 // Custom icons (lucide-react doesn't export Github and Linkedin)
 const GithubIcon = ({ className = "w-5 h-5" }: { className?: string }) => (
@@ -362,12 +364,9 @@ export default function LandingPage() {
         className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-black/90 backdrop-blur-xl"
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-500 rounded-lg flex items-center justify-center">
-              <Database className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-xl font-bold tracking-tighter">GATeR</span>
-          </div>
+          <Link href="/landing" className="inline-flex shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 rounded" aria-label="Home">
+            <SiteLogoMark size={56} priority />
+          </Link>
           
           <nav className="hidden md:flex items-center gap-8 text-sm">
             <a href="#features" className="text-zinc-400 hover:text-white transition-colors">Features</a>
@@ -387,18 +386,18 @@ export default function LandingPage() {
       </motion.header>
 
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center px-6 pt-32">
+      <section className="relative min-h-screen flex flex-col items-center px-6 pt-20 md:pt-24 pb-16">
         <motion.div
           initial="hidden"
           animate="visible"
           variants={staggerContainer}
-          className="max-w-5xl mx-auto text-center"
+          className="max-w-5xl mx-auto text-center w-full"
           style={{ opacity }}
         >
           {/* Badge */}
           <motion.div
             variants={fadeInUp}
-            transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
+            transition={{ duration: 0.8, ease: "easeOut", delay: 0.05 }}
             className="inline-flex items-center gap-2 px-4 py-2 mb-8 bg-zinc-900/50 backdrop-blur-sm border border-zinc-800 rounded-full text-sm"
           >
             <Circle className="w-2 h-2 fill-blue-400 text-blue-400 animate-pulse" />
@@ -411,13 +410,9 @@ export default function LandingPage() {
           <motion.h1
             variants={fadeInUp}
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
-            className="text-6xl md:text-8xl font-bold mb-6 tracking-tighter"
+            className="text-5xl md:text-7xl font-bold mb-6 tracking-tighter text-white"
           >
-            <span className="bg-gradient-to-r from-white via-zinc-300 to-blue-500 bg-clip-text text-transparent">
-              GATeR
-            </span>
-            <br />
-            <span className="text-white">Intelligent Test Repair</span>
+            Intelligent Test Repair
           </motion.h1>
 
           {/* Subtitle */}
@@ -623,11 +618,8 @@ export default function LandingPage() {
           <div className="grid md:grid-cols-4 gap-8 mb-12">
             {/* Brand */}
             <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                  <Database className="w-4 h-4 text-white" />
-                </div>
-                <span className="text-xl font-bold">GATeR</span>
+              <div className="mb-4">
+                <SiteLogoMark size={48} />
               </div>
               <p className="text-sm text-zinc-400">
                 Graph-Augmented Test Repair powered by AI
@@ -670,7 +662,7 @@ export default function LandingPage() {
           {/* Bottom bar */}
           <div className="pt-8 border-t border-zinc-800/50 flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-zinc-500">
-              © 2026 GATeR. All rights reserved.
+              © 2026. All rights reserved.
             </p>
             
             <div className="flex items-center gap-4">

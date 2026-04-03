@@ -290,7 +290,7 @@ pre code {
 
 .glass-panel {
   background: rgba(53, 52, 54, 0.6);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
 }
 
 .active-tab-glow {

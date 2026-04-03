@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import { useSession, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { GitBranch, Database, Network, Zap, Shield, Lock, ChevronRight } from 'lucide-react';
+import { SiteLogoMark } from '@/components/ui/SiteLogo';
 
 const GithubIcon = () => (
   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -42,18 +43,8 @@ export default function LoginPage() {
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 border-r border-outline-variant/15 bg-surface-container-lowest">
         <div>
           {/* Logo */}
-          <div className="flex items-center gap-3 mb-16">
-            <div className="w-10 h-10 rounded-lg bg-primary-container flex items-center justify-center">
-              <Database className="w-5 h-5 text-on-primary-container" />
-            </div>
-            <div>
-              <span className="text-xl font-headline font-bold text-primary tracking-tight block leading-none">
-                GATeR
-              </span>
-              <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-widest mt-1 block">
-                Graph • Knowledge • Repair
-              </span>
-            </div>
+          <div className="mb-16">
+            <SiteLogoMark size={80} priority />
           </div>
 
           {/* Hero */}
@@ -101,11 +92,8 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center p-8 bg-background">
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile Logo */}
-          <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-lg bg-primary-container flex items-center justify-center">
-              <Database className="w-5 h-5 text-on-primary-container" />
-            </div>
-            <span className="text-xl font-headline font-bold text-primary tracking-tight">GATeR</span>
+          <div className="lg:hidden mb-8 flex justify-center">
+            <SiteLogoMark size={80} />
           </div>
 
           {/* Card */}

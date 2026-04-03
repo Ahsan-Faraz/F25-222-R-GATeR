@@ -1,41 +1,51 @@
-# GATeR — Stitch design system (strict)
+# GATeR — Design system (Stitch MCP, authoritative)
 
-**Source of truth:** Google Stitch project `11940742516565365524` (“Pipeline Deep Dive”), fetched via Stitch MCP:
+**Project:** `11940742516565365524` — *Pipeline Deep Dive*  
+**Last synced:** 2026-04-02 via Stitch MCP: `get_project`, `list_design_systems`, `fetch_screen_code`  
+**Design system asset:** `assets/ce0962ed48f64c1eb3745224ab7fe7cc` — display name **GATeR Obsidian**
 
-- `get_project` → `projects/11940742516565365524` (`designTheme`)
-- `list_design_systems` → asset `assets/ce0962ed48f64c1eb3745224ab7fe7cc`, display name **GATeR Obsidian**
-- `fetch_screen_code` → screen `f8392340720a469cb944211c9fac7ea3` (**Workspace Dashboard**) for the **exact** Tailwind `theme.extend` block and layout measurements
-
-**DTCG note:** The design-system asset did **not** return a non-empty `designTokens` (DTCG JSON) field in MCP responses. Token values below are the **complete** set returned by Stitch APIs plus **verbatim** values from the generated Workspace HTML.
-
-**Goal:** Implement the Next.js UI using these values so visuals match Stitch exports. Prefer a single `tailwind.config` extension that mirrors the Workspace HTML `tailwind.config` colors and `fontFamily` keys.
+This file consolidates **API-returned tokens** (`designTheme.namedColors`, overrides, enums) and **verbatim** `designMd` / Workspace HTML patterns. Use with `tailwind.config.js` + `globals.css`.
 
 ---
 
-## 1. Theme metadata (Stitch)
+## 1. Project & screen inventory (Stitch `list_screens`)
+
+| Screen ID | Title |
+|-----------|--------|
+| `007b0af1d8e14f93a3fabd06798c4480` | Pipeline Deep Dive |
+| `e4e639dbacf3443cb80db536a672c00c` | Landing Page |
+| `f8392340720a469cb944211c9fac7ea3` | Workspace Dashboard |
+| `1c1c09567db14e808d96748bba31c9bf` | Test Repair View |
+| `f4c8da3312714034ab88ee4239785620` | Knowledge Graph Visualization |
+| `f463096b4d6048989c9ccdaf046570c7` | Knowledge Graph - Cluster View |
+| `ade1a70de8e44ec69174e3aa18ea125c` | Repository Analysis |
+| `3a1d8792207e4578b275313fd8a4703d` | Vector Search Retrieval |
+| `f427898ce83c44e1886e137df7ec87ca` | KGCompass Search |
+| `7e08675e25ad450ab87d13d74d8f0854` | KUZU DB Performance |
+| `79e779870a344d769ec7f6aa99fd8a1e` | Export & PR Integration |
+
+---
+
+## 2. Theme metadata (`designTheme`)
 
 | Field | Value |
 |--------|--------|
-| Display name | **GATeR Obsidian** |
 | Color mode | `DARK` |
 | Color variant | `FIDELITY` |
-| Seed / custom color | `#00E5FF` |
+| Custom / seed color | `#00E5FF` |
 | Override primary | `#00E5FF` |
 | Override secondary | `#7C4DFF` |
 | Override tertiary | `#FFC107` |
 | Override neutral | `#050506` |
-| Roundness enum | `ROUND_EIGHT` → **8px** default radius for primary UI (see §5) |
+| Roundness | `ROUND_EIGHT` → **8px** primary UI (`rounded-lg` in Tailwind extend) |
 | Spacing scale | `3` → **spacious** (Stitch: 0 minimal … 3 spacious) |
-| Headline font (enum) | `PLUS_JAKARTA_SANS` |
-| Body / label font (enum) | `INTER` |
+| Headline font | `PLUS_JAKARTA_SANS` |
+| Body font | `INTER` |
+| Label font | `INTER` |
 
 ---
 
-## 2. Colors — exact hex (Material roles)
-
-Use these names in Tailwind/CSS variables to match Stitch exports.
-
-### 2.1 Core surfaces
+## 3. Color palette — all hex codes (`namedColors` from MCP)
 
 | Token | Hex |
 |--------|-----|
@@ -50,11 +60,6 @@ Use these names in Tailwind/CSS variables to match Stitch exports.
 | `surface_container_highest` | `#353436` |
 | `surface_variant` | `#353436` |
 | `surface_tint` | `#00daf3` |
-
-### 2.2 Primary (cyan)
-
-| Token | Hex |
-|--------|-----|
 | `primary` | `#c3f5ff` |
 | `primary_container` | `#00e5ff` |
 | `primary_fixed` | `#9cf0ff` |
@@ -64,11 +69,6 @@ Use these names in Tailwind/CSS variables to match Stitch exports.
 | `on_primary_fixed` | `#001f24` |
 | `on_primary_fixed_variant` | `#004f58` |
 | `inverse_primary` | `#006875` |
-
-### 2.3 Secondary (violet)
-
-| Token | Hex |
-|--------|-----|
 | `secondary` | `#cdbdff` |
 | `secondary_container` | `#5203d5` |
 | `secondary_fixed` | `#e8deff` |
@@ -77,11 +77,6 @@ Use these names in Tailwind/CSS variables to match Stitch exports.
 | `on_secondary_container` | `#c0acff` |
 | `on_secondary_fixed` | `#20005f` |
 | `on_secondary_fixed_variant` | `#4f00d0` |
-
-### 2.4 Tertiary (amber)
-
-| Token | Hex |
-|--------|-----|
 | `tertiary` | `#ffebc6` |
 | `tertiary_container` | `#ffc948` |
 | `tertiary_fixed` | `#ffdf9e` |
@@ -90,11 +85,6 @@ Use these names in Tailwind/CSS variables to match Stitch exports.
 | `on_tertiary_container` | `#725400` |
 | `on_tertiary_fixed` | `#261a00` |
 | `on_tertiary_fixed_variant` | `#5b4300` |
-
-### 2.5 Content / outline / inverse
-
-| Token | Hex |
-|--------|-----|
 | `on_background` | `#e5e1e3` |
 | `on_surface` | `#e5e1e3` |
 | `on_surface_variant` | `#bac9cc` |
@@ -102,85 +92,67 @@ Use these names in Tailwind/CSS variables to match Stitch exports.
 | `outline_variant` | `#3b494c` |
 | `inverse_surface` | `#e5e1e3` |
 | `inverse_on_surface` | `#313032` |
-
-### 2.6 Error
-
-| Token | Hex |
-|--------|-----|
 | `error` | `#ffb4ab` |
 | `error_container` | `#93000a` |
 | `on_error` | `#690005` |
 | `on_error_container` | `#ffdad6` |
 
-**Rule (from Stitch `designMd`):** Do **not** use pure `#FFFFFF` for body text; primary text is **`on_surface`** (`#e5e1e3`).
+**Rule:** Do not use pure `#FFFFFF` for body text; use **`on_surface`** (`#e5e1e3`).
 
 ---
 
-## 3. Typography
+## 4. Typography
 
-### 3.1 Font families (load these)
+### 4.1 Font families (load in app)
 
-| Role | Family | Weights (from Stitch HTML) |
-|------|--------|----------------------------|
-| Headline / display | **Plus Jakarta Sans** | 400, 500, 600, 700, 800 |
-| Body / UI / label | **Inter** | 300, 400, 500, 600 |
-| Mono / data / code | **JetBrains Mono** | 400, 500 |
+| Role | Family | Weights (typical) |
+|------|--------|-------------------|
+| Headline / display | Plus Jakarta Sans | 400–800 |
+| Body / label | Inter | 300–600 |
+| Mono / code | JetBrains Mono | 400, 500 |
 
-Google Fonts link used in Stitch Workspace HTML:
+Google Fonts link used in Stitch HTML:
 
 `https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap`
 
-Tailwind `fontFamily` keys from Workspace export:
+Tailwind `fontFamily` keys (from exports):
 
 - `font-headline` → Plus Jakarta Sans  
-- `font-body` / `font-inter` → Inter  
+- `font-body` / `font-label` → Inter  
 - `font-mono` → JetBrains Mono  
 
-### 3.2 Type scale (from Stitch `designMd` — strict)
+### 4.2 Type scale (from `designMd`)
 
 | Token | Size | Letter-spacing | Usage |
 |--------|------|----------------|--------|
 | `display-lg` | **3.5rem** (56px) | **-0.02em** | Hero / major headlines |
 | `title-sm` | **1rem** (16px) | default | Nav labels, section titles |
-| `body-md` | **0.875rem** (14px) | default | Body copy, descriptions |
-| `label-md` | match body or 0.75–0.875rem | — | Form labels (`on_surface_variant`) |
+| `body-md` | **0.875rem** (14px) | default | Body copy |
+| `label-md` | 0.75–0.875rem | — | Form labels (`on_surface_variant`) |
 
-Workspace HTML examples (follow for density):
-
-- Sidebar product title: `text-[#c3f5ff] font-bold font-headline tracking-tighter leading-none`
-- Sub-label: `text-[10px] text-on-surface-variant/60 uppercase tracking-widest`
-- Page H2: `text-3xl font-headline font-extrabold tracking-tight text-on-surface`
-- Status bar mono: `text-[11px] font-mono text-primary/80 uppercase tracking-tighter`
-- Micro caps: `text-[10px] text-on-surface-variant/50 uppercase`
+Material Symbols (Stitch): Outlined, base ~20px, `FILL` 0, weight 300–400 in various screens.
 
 ---
 
-## 4. Spacing system
+## 5. Spacing
 
-**Stitch `spacingScale`: `3` (spacious).**
+**Stitch `spacingScale`:** `3` (spacious).
 
-From `designMd` (authoritative rhythm):
-
-| Token | Rem | Px (16 root) | Use |
-|--------|-----|----------------|-----|
+| Token / use | Rem | Px (16 root) | Notes |
+|-------------|-----|----------------|--------|
 | `3` | **1rem** | 16 | List/card vertical rhythm |
 | `4` | **1.4rem** | 22.4 | Larger stack gaps |
 | `24` | **8.5rem** | 136 | Major section breaks (“editorial”) |
 
-**Layout constants from Workspace HTML:**
+**Layout constants (Workspace / marketing HTML):**
 
-- Main content: `p-8` → **32px** page padding  
-- Sidebar: `py-6`, horizontal `px-6` on blocks  
-- Bento grid: `gap-6` → **24px**  
-- Section vertical: `space-y-8` → **32px** between blocks  
+- Main content padding: `p-8` → **32px**  
+- Page sections: `space-y-8` / `gap-6` / `gap-12` as in screen exports  
+- Pipeline page: `main` uses `pt-32 pb-24 px-6 md:px-12`; sticky TOC `top-32`  
 
 ---
 
-## 5. Border radius
-
-**Stitch enum:** `ROUND_EIGHT` → **8px** engineered default for buttons/cards (`0.5rem`).
-
-**Workspace HTML `tailwind.config` extension:**
+## 6. Border radius (`tailwind.config` extend from Stitch HTML)
 
 | Key | Value |
 |-----|--------|
@@ -189,137 +161,72 @@ From `designMd` (authoritative rhythm):
 | `xl` | `0.75rem` (12px) |
 | `full` | `9999px` |
 
-Apply **8px** (`rounded-lg` in that config) for primary cards and primary buttons unless a component explicitly uses `rounded` (4px) or `rounded-xl` (12px).
+Primary cards / buttons: **`rounded-lg`** (8px) unless a control uses `rounded` (4px) or `rounded-xl` (12px).
 
 ---
 
-## 6. Shadows and elevation
+## 7. Component styles (from `designMd`)
 
-**Philosophy (Stitch):** Depth is **tonal layering** (surface tokens), not heavy shadows on static cards.
+### 7.1 Buttons
 
-### 6.1 Allowed shadows (from exports)
+- **Primary:** Gradient `primary` → `primary_container`, text `on_primary`, no border, `rounded-lg`, hover ~opacity 0.9. *(Some Stitch screens use solid `bg-primary` + `text-on-primary` for emphasis buttons.)*  
+- **Secondary / ghost:** Transparent or `surface_container_low`, border `outline_variant` ~20%, text `primary`.  
+- **Tertiary:** Text `primary`, hover background `surface_container_low`.
 
-| Name | Definition |
-|------|------------|
-| **Active nav glow** | `box-shadow: 0 0 15px rgba(195, 245, 255, 0.1);` (class `active-tab-glow` in Workspace HTML) |
-| **Status dot** | `box-shadow: 0 0 8px rgba(195, 245, 255, 0.6);` (inline on status beacon) |
-| **Floating FAB** | `shadow-2xl` (Tailwind) on primary circular button |
-| **Ambient (modals / float)** | From `designMd`: `#000000` at **20%** opacity, **32px** blur, optionally tinted toward primary for “screen glow” |
+### 7.2 Inputs
 
-### 6.2 Glass panel (floating / secondary surfaces)
+- Background: `surface_container_low`  
+- Border: `outline_variant` ~20%; focus: primary.  
+- Labels: `label-md`, `on_surface_variant`.
 
-From Workspace HTML:
+### 7.3 Cards & lists
+
+- Background: `surface_container_lowest` or `surface_container_low`  
+- Border: `outline_variant` ~10%  
+- No hard divider lines between rows; use spacing tokens **3** / **4**  
+- Hover: `surface_container_high`
+
+### 7.4 Glass panel (Stitch HTML export)
 
 ```css
 .glass-panel {
   background: rgba(53, 52, 54, 0.6);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
 }
 ```
 
-`designMd` also allows **12px–20px** backdrop blur and `surface_variant` at ~60% opacity for glass.
+### 7.5 Code blocks
 
-### 6.3 Borders
+- Background: `surface_container_lowest`  
+- Font: JetBrains Mono  
+- Border: ghost `outline_variant` (low opacity)
 
-- Prefer **no** 1px layout borders; separate regions by **background** (`surface_container_low` vs `surface`).
-- When required: **`outline_variant` at 10–20% opacity** (e.g. `border-outline-variant/10`, `/15`, `/20` in Tailwind).
-- Ghost border for accessibility: **`outline_variant` ~15%** (never full-strength dividers for layout).
+### 7.6 Status beacon
 
----
-
-## 7. Component styles (match Stitch)
-
-### 7.1 Buttons
-
-| Variant | Style |
-|---------|--------|
-| **Primary** | Linear gradient **`primary` → `primary_container`**, text **`on_primary`**, **no border**, radius **8px** (`rounded-lg`), hover **opacity ~0.9** |
-| **Secondary / ghost** | Transparent or `surface_container_low`, border **`outline_variant` ~20%**, text **`primary`** |
-| **Tertiary** | Text **`primary`**, hover background **`surface_container_low`** |
-| **Destructive emphasis** | Use **`error`** / **`on_error`** tokens for alerts |
-
-### 7.2 Inputs
-
-- Background: **`surface_container_low`**
-- Border: **`outline_variant` @ ~20%**; focus: **primary** solid border
-- Labels: **`label-md`**, color **`on_surface_variant`**
-
-### 7.3 Cards & lists
-
-- Background: **`surface_container_lowest`** or **`surface_container_low`**
-- Border: **`outline_variant` @ 10%** typical (`border-outline-variant/10`)
-- Radius: **8px** (`rounded-lg`)
-- **No** divider lines between rows; use **spacing 3 / 4** only
-- Hover: background → **`surface_container_high`**
-
-### 7.4 Code blocks
-
-- Background: **`surface_container_lowest`**
-- Font: **JetBrains Mono**
-- Border: 1px **ghost** `outline_variant` (low opacity)
-
-### 7.5 Status beacon
-
-- **8px** circle, fill **`primary`** (active) or **`error`** (failed)
-- Optional outer glow using **`surface_tint`**
+- **8px** circle, `primary` (active) or `error` (failed); optional glow with `surface_tint`.
 
 ---
 
-## 8. Navbar (top status bar) — Workspace HTML
+## 8. Shadows & elevation
 
-| Property | Value |
-|----------|--------|
-| Height | **64px** (`h-16`) |
-| Background | **`#0e0e0f`** (`surface_container_lowest`) |
-| Bottom border | **`outline_variant` @ 5%** (`border-outline-variant/5`) |
-| Horizontal padding | **32px** (`px-8`) |
-| Position | **sticky** `top-0`, `z-40` |
-
-Content pattern: status pill (2px dot + mono label), vertical **1px** separators at **20%** `outline_variant`, optional CMD+K chip (`surface_container_low` + `outline_variant/20` border).
+- Depth via **tonal layering** (surface tokens), not heavy shadows on static cards.  
+- **Active nav glow:** `box-shadow: 0 0 15px rgba(195, 245, 255, 0.1);`  
+- **Status dot:** `box-shadow: 0 0 8px rgba(195, 245, 255, 0.6);`  
+- **Floating FAB:** `shadow-2xl`  
+- **Ambient (modals):** black ~20% opacity, ~32px blur  
 
 ---
 
-## 9. Sidebar — Workspace HTML
+## 9. Navbar & footer (marketing screens)
 
-| Property | Value |
-|----------|--------|
-| Width | **256px** (`w-64`) |
-| Position | **fixed** `left-0 top-0`, full height |
-| Background | **`#0e0e0f`** (`surface_container_lowest`) |
-| Right border | **`outline_variant` @ 15%** (`border-outline-variant/15`) |
-| Vertical padding | **24px** (`py-6`) |
-| Nav item | `px-6 py-3`, inactive text **`on_surface` @ 60%** |
-| **Active item** | Text **`#c3f5ff`**, **left border 2px** `primary`, background **`#131315`**, class **`active-tab-glow`** |
-| Icons | Material Symbols Outlined, **20px**, weight **300**, `FILL` 0 |
+- Nav height **64px** (`h-16`), `bg-surface` / `#131315` in exports, horizontal padding **32px** (`px-8`).  
+- Footer: `bg-[#131315]`, `border-t border-[#e5e1e3]/10`, uppercase tracking, `text-[#e5e1e3]/40` for muted links.
 
 ---
 
-## 10. Tailwind — canonical `theme.extend` (colors + fonts + radius)
+## 10. Verbatim `designMd` (Kinetic Precision Framework)
 
-Copy **exact** `colors` and `fontFamily` from the Workspace `fetch_screen_code` `<script id="tailwind-config">` block (section 2 table matches that object). Keep **kebab-case** keys as in HTML: `on-surface`, `primary-container`, etc.
-
----
-
-## 11. Optional: Material icons
-
-Stitch Workspace uses **Material Symbols Outlined**:
-
-`https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap`
-
-Base class:
-
-```css
-.material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
-  font-size: 20px;
-}
-```
-
----
-
-## 12. Full Stitch design markdown (verbatim)
-
-The following is **exactly** the `designMd` string returned by Stitch for this project (Kinetic Precision Framework). Use it for qualitative rules; **hex values** in §2 override if anything conflicts.
+The following is the **exact** `designMd` string returned by Stitch for this project’s theme.
 
 ---
 
@@ -421,4 +328,12 @@ We reject the "Shadow-First" mentality. Depth is achieved via **Tonal Layering**
 
 ---
 
-**Revision:** Generated from Stitch MCP + Workspace HTML export. Re-fetch project `11940742516565365524` after major Stitch edits to keep this file synchronized.
+## 11. DTCG note
+
+The design-system asset may expose `designTokens` (DTCG JSON). If empty in MCP responses, rely on **`namedColors`** above and **HTML exports** (`fetch_screen_code`) for Tailwind `theme.extend` blocks.
+
+---
+
+## 12. Revision
+
+Re-fetch Stitch MCP after major theme or screen changes: project `11940742516565365524`.
