@@ -50,10 +50,27 @@ workspace/lancedb/
 
 # Cache and temporary files
 workspace/repos/
+workspace/repos_eval/
+workspace/eval_stores/
+workspace/fix/
 workspace/data/entities.jsonl
 workspace/data/knowledge_graph.jsonl
 workspace/data/step5_relevance_scores.json
+workspace/data/*.json
 workspace/embeddings_cache/
+workspace/*.wal
+
+# Evaluation results
+evaluation/results/
+evaluation/results.rar
+evaluation/run_ablation_study.py
+evaluation/run_targeted_subset_pipeline.py
+
+# TaRBench dataset
+25008893/
+
+# Production files
+production_diffs.json
 
 # Environment variables
 .env
