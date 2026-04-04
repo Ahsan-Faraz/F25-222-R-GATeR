@@ -331,10 +331,10 @@ export default function GATRPanel() {
             <div className="px-4 py-3 bg-error-container/10 flex justify-between items-center border-b border-error/10 flex-wrap gap-2">
               <h3 className="text-xs font-bold uppercase tracking-widest text-error flex items-center gap-2">
                 <MaterialIcon name="bug_report" className="!text-[16px]" />
-                Broken Test Code
+                Broken Test Input
               </h3>
               <div className="flex gap-2 text-[10px] font-mono text-error/70">
-                <span>{testFile || 'test_file.py'}</span>
+                <span>Auto-extracts class & file from code</span>
               </div>
             </div>
             <div className="p-4 space-y-4 bg-[#0e0e0f]">
