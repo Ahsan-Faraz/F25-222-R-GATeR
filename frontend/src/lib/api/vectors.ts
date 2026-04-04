@@ -1,4 +1,4 @@
-import { apiFetch, apiJson } from '../api-client';
+import { apiFetch, apiJson, getAccessToken } from '../api-client';
 
 export async function getVectorStats() {
   return apiJson<Record<string, unknown>>('/vectors/stats');
@@ -29,6 +29,8 @@ function normalizeHit(raw: Record<string, unknown>) {
 }
 
 export async function semanticSearch(params: { text: string; topK: number }) {
+  console.log('[semanticSearch] Called with params:', params);
+  
   const data = await apiJson<{
     success?: boolean;
     results?: Record<string, unknown>[];
@@ -42,8 +44,14 @@ export async function semanticSearch(params: { text: string; topK: number }) {
     }),
   });
 
+  console.log('[semanticSearch] Received data:', data);
   const list = data.results ?? [];
-  return list.map((r) => normalizeHit(r));
+  console.log('[semanticSearch] Results count:', list.length);
+  
+  const normalized = list.map((r) => normalizeHit(r));
+  console.log('[semanticSearch] Normalized results:', normalized);
+  
+  return normalized;
 }
 
 /** Probe POST /vectors/search for dashboard latency display. */

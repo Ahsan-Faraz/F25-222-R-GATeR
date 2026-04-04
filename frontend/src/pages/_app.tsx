@@ -12,7 +12,11 @@ function TokenSync({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
 
   useEffect(() => {
+    console.log('[TokenSync] Status:', status);
+    console.log('[TokenSync] Session:', session);
+    
     if (status === 'authenticated' && session?.accessToken) {
+      console.log('[TokenSync] Setting access token:', session.accessToken.substring(0, 10) + '...');
       // Set token in API client
       setAccessToken(session.accessToken);
       
@@ -33,7 +37,10 @@ function TokenSync({ children }: { children: React.ReactNode }) {
           console.warn('Flask sync failed (backend may be down):', err.message);
         });
     } else if (status === 'unauthenticated') {
+      console.log('[TokenSync] User unauthenticated, clearing token');
       setAccessToken(null);
+    } else {
+      console.log('[TokenSync] Status is loading or unknown');
     }
   }, [session, status]);
 

@@ -47,7 +47,7 @@ function ScoreRing({ score, color }: { score: number; color: 'primary' | 'second
 export default function VectorPanel() {
   const [query, setQuery] = useState('');
   const [topK, setTopK] = useState(25);
-  const [threshold, setThreshold] = useState(82);
+  const [threshold, setThreshold] = useState(30); // Changed from 82 to 30 for better default
   const [partition, setPartition] = useState('code');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,10 +60,17 @@ export default function VectorPanel() {
 
   const threshold01 = threshold / 100;
 
-  const filteredResults = useMemo(
-    () => results.filter((r) => r.similarity_score >= threshold01),
-    [results, threshold01]
-  );
+  const filteredResults = useMemo(() => {
+    const filtered = results.filter((r) => r.similarity_score >= threshold01);
+    console.log('[VectorPanel] Filtering results:');
+    console.log('  Total results:', results.length);
+    console.log('  Threshold:', threshold01);
+    console.log('  Filtered results:', filtered.length);
+    if (results.length > 0 && filtered.length === 0) {
+      console.log('  Sample similarity scores:', results.slice(0, 5).map(r => r.similarity_score));
+    }
+    return filtered;
+  }, [results, threshold01]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
