@@ -47,6 +47,7 @@ export default function GATRPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engineStatus, setEngineStatus] = useState<GATREngineStatus | null>(null);
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [repairState, setRepairState] = useState<RepairState>({
     repairId: null,
     status: 'idle',
@@ -92,10 +93,10 @@ export default function GATRPanel() {
       const result = await repairTest({
         test_code: testCode,
         test_name: testName || 'unknown_test',
-        test_file: testFile || '',
-        test_class: testClass || '',
         error_message: errorMessage,
-        include_debug_trace: true,
+        // Optional fields - only send if provided
+        ...(testFile && { test_file: testFile }),
+        ...(testClass && { test_class: testClass }),
       });
 
       const errMsg =
@@ -343,40 +344,86 @@ export default function GATRPanel() {
               </div>
             </div>
             <div className="p-4 space-y-3 bg-[#0e0e0f]">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <input
-                  value={testName}
-                  onChange={(e) => setTestName(e.target.value)}
-                  placeholder="test_name"
-                  className="ghost-input bg-surface-container-lowest font-mono"
-                />
-                <input
-                  value={testFile}
-                  onChange={(e) => setTestFile(e.target.value)}
-                  placeholder="path/to/test.py"
-                  className="ghost-input bg-surface-container-lowest font-mono"
-                />
-                <input
-                  value={testClass}
-                  onChange={(e) => setTestClass(e.target.value)}
-                  placeholder="TestClass (optional)"
-                  className="ghost-input bg-surface-container-lowest font-mono sm:col-span-2"
+              <div className="space-y-3">
+                {/* Required Fields */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/70">
+                    Test Name <span className="text-error">*</span>
+                  </label>
+                  <input
+                    value={testName}
+                    onChange={(e) => setTestName(e.target.value)}
+                    placeholder="test_function_name"
+                    className="ghost-input bg-surface-container-lowest font-mono w-full"
+                  />
+                </div>
+
+                {/* Optional Fields Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalFields(!showOptionalFields)}
+                  className="text-xs text-on-surface-variant/60 hover:text-primary font-mono flex items-center gap-2"
+                >
+                  <MaterialIcon name={showOptionalFields ? 'expand_less' : 'expand_more'} className="!text-sm" />
+                  {showOptionalFields ? 'Hide' : 'Show'} optional fields (test file, class)
+                </button>
+
+                {/* Optional Fields */}
+                {showOptionalFields && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-outline-variant/10">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/50">
+                        Test File (optional)
+                      </label>
+                      <input
+                        value={testFile}
+                        onChange={(e) => setTestFile(e.target.value)}
+                        placeholder="path/to/test.py"
+                        className="ghost-input bg-surface-container-lowest font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/50">
+                        Test Class (optional)
+                      </label>
+                      <input
+                        value={testClass}
+                        onChange={(e) => setTestClass(e.target.value)}
+                        placeholder="TestClassName"
+                        className="ghost-input bg-surface-container-lowest font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Test Code */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/70">
+                  Broken Test Code <span className="text-error">*</span>
+                </label>
+                <textarea
+                  value={testCode}
+                  onChange={(e) => setTestCode(e.target.value)}
+                  placeholder="Paste failing test code here..."
+                  rows={8}
+                  className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[160px] focus:outline-none focus:border-primary/40"
                 />
               </div>
-              <textarea
-                value={testCode}
-                onChange={(e) => setTestCode(e.target.value)}
-                placeholder="Paste failing test…"
-                rows={8}
-                className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[160px] focus:outline-none focus:border-primary/40"
-              />
-              <textarea
-                value={errorMessage}
-                onChange={(e) => setErrorMessage(e.target.value)}
-                placeholder="Paste traceback / assertion error…"
-                rows={3}
-                className="w-full font-mono text-[12px] p-3 rounded border border-error/20 bg-error-container/5 text-error/90 resize-y focus:outline-none"
-              />
+
+              {/* Error Message */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono uppercase tracking-wider text-error/70">
+                  Error Message / Assertion <span className="text-error">*</span>
+                </label>
+                <textarea
+                  value={errorMessage}
+                  onChange={(e) => setErrorMessage(e.target.value)}
+                  placeholder="Paste the assertion error or traceback here..."
+                  rows={3}
+                  className="w-full font-mono text-[12px] p-3 rounded border border-error/20 bg-error-container/5 text-error/90 resize-y focus:outline-none"
+                />
+              </div>
             </div>
           </section>
 
