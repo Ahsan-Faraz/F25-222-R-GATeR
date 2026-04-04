@@ -41,13 +41,10 @@ function stepActive(s: StepKey, repairState: RepairState, hasContext: boolean): 
 export default function GATRPanel() {
   const [testCode, setTestCode] = useState('');
   const [testName, setTestName] = useState('');
-  const [testFile, setTestFile] = useState('');
-  const [testClass, setTestClass] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engineStatus, setEngineStatus] = useState<GATREngineStatus | null>(null);
-  const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [repairState, setRepairState] = useState<RepairState>({
     repairId: null,
     status: 'idle',
@@ -94,9 +91,6 @@ export default function GATRPanel() {
         test_code: testCode,
         test_name: testName || 'unknown_test',
         error_message: errorMessage,
-        // Optional fields - only send if provided
-        ...(testFile && { test_file: testFile }),
-        ...(testClass && { test_class: testClass }),
       });
 
       const errMsg =
@@ -343,58 +337,18 @@ export default function GATRPanel() {
                 <span>{testFile || 'test_file.py'}</span>
               </div>
             </div>
-            <div className="p-4 space-y-3 bg-[#0e0e0f]">
-              <div className="space-y-3">
-                {/* Required Fields */}
-                <div className="space-y-2">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/70">
-                    Test Name <span className="text-error">*</span>
-                  </label>
-                  <input
-                    value={testName}
-                    onChange={(e) => setTestName(e.target.value)}
-                    placeholder="test_function_name"
-                    className="ghost-input bg-surface-container-lowest font-mono w-full"
-                  />
-                </div>
-
-                {/* Optional Fields Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setShowOptionalFields(!showOptionalFields)}
-                  className="text-xs text-on-surface-variant/60 hover:text-primary font-mono flex items-center gap-2"
-                >
-                  <MaterialIcon name={showOptionalFields ? 'expand_less' : 'expand_more'} className="!text-sm" />
-                  {showOptionalFields ? 'Hide' : 'Show'} optional fields (test file, class)
-                </button>
-
-                {/* Optional Fields */}
-                {showOptionalFields && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-outline-variant/10">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/50">
-                        Test File (optional)
-                      </label>
-                      <input
-                        value={testFile}
-                        onChange={(e) => setTestFile(e.target.value)}
-                        placeholder="path/to/test.py"
-                        className="ghost-input bg-surface-container-lowest font-mono"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/50">
-                        Test Class (optional)
-                      </label>
-                      <input
-                        value={testClass}
-                        onChange={(e) => setTestClass(e.target.value)}
-                        placeholder="TestClassName"
-                        className="ghost-input bg-surface-container-lowest font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
+            <div className="p-4 space-y-4 bg-[#0e0e0f]">
+              {/* Test Name */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/70">
+                  Test Name <span className="text-error">*</span>
+                </label>
+                <input
+                  value={testName}
+                  onChange={(e) => setTestName(e.target.value)}
+                  placeholder="test_function_name"
+                  className="ghost-input bg-surface-container-lowest font-mono w-full"
+                />
               </div>
 
               {/* Test Code */}
@@ -406,9 +360,12 @@ export default function GATRPanel() {
                   value={testCode}
                   onChange={(e) => setTestCode(e.target.value)}
                   placeholder="Paste failing test code here..."
-                  rows={8}
-                  className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[160px] focus:outline-none focus:border-primary/40"
+                  rows={10}
+                  className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[200px] focus:outline-none focus:border-primary/40"
                 />
+                <p className="text-[10px] text-on-surface-variant/50 font-mono">
+                  💡 Tip: Include the class definition if your test is inside a class
+                </p>
               </div>
 
               {/* Error Message */}
@@ -420,7 +377,7 @@ export default function GATRPanel() {
                   value={errorMessage}
                   onChange={(e) => setErrorMessage(e.target.value)}
                   placeholder="Paste the assertion error or traceback here..."
-                  rows={3}
+                  rows={4}
                   className="w-full font-mono text-[12px] p-3 rounded border border-error/20 bg-error-container/5 text-error/90 resize-y focus:outline-none"
                 />
               </div>

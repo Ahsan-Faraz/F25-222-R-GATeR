@@ -1647,12 +1647,47 @@ def gatr_repair_test():
         
         logger.info(f"GATR: Starting repair for test: {test_name} (project: {project_name})")
         
+        # Auto-extract test_class from test_code if not provided
+        test_class = data.get('test_class', '').strip()
+        if not test_class and test_code:
+            import re
+            class_match = re.search(r'class\s+(\w+)', test_code)
+            if class_match:
+                test_class = class_match.group(1)
+                logger.info(f"Auto-extracted test_class: {test_class}")
+        
+        # Auto-extract test_file from vector DB if not provided
+        test_file = data.get('test_file', '').strip()
+        if not test_file and test_name and lance_manager and lance_manager.is_available():
+            try:
+                # Search for the test in vector DB
+                from relevance.embedding_generator import EmbeddingGenerator
+                eg = EmbeddingGenerator()
+                query_embedding = eg.generate_embedding(test_name)
+                search_results = lance_manager.search_vectors(
+                    table_name="code_entity_embeddings",
+                    query_vector=query_embedding,
+                    top_k=5
+                )
+                
+                # Find matching test entity
+                if isinstance(search_results, dict):
+                    for result in search_results.get('results', []):
+                        if (result.get('entity_name') == test_name or 
+                            test_name in result.get('entity_name', '')):
+                            test_file = result.get('file_path', '')
+                            if test_file:
+                                logger.info(f"Auto-extracted test_file from vector DB: {test_file}")
+                                break
+            except Exception as e:
+                logger.warning(f"Could not auto-extract test_file from vector DB: {e}")
+        
         # Build broken test info
         broken_test = {
             'test_name': test_name,
             'test_code': test_code,
-            'test_file': data.get('test_file', ''),
-            'test_class': data.get('test_class', ''),
+            'test_file': test_file,
+            'test_class': test_class,
             'line_number': data.get('line_number')
         }
         
