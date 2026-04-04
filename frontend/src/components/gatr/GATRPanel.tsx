@@ -89,8 +89,9 @@ export default function GATRPanel() {
     try {
       const result = await repairTest({
         test_code: testCode,
-        test_name: testName || 'unknown_test',
         error_message: errorMessage,
+        // Only send test_name if provided
+        ...(testName && { test_name: testName }),
       });
 
       const errMsg =
@@ -338,16 +339,16 @@ export default function GATRPanel() {
               </div>
             </div>
             <div className="p-4 space-y-4 bg-[#0e0e0f]">
-              {/* Test Name */}
+              {/* Test Name - Optional */}
               <div className="space-y-2">
-                <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/70">
-                  Test Name <span className="text-error">*</span>
+                <label className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant/50">
+                  Test Name <span className="text-on-surface-variant/40">(optional - auto-extracted)</span>
                 </label>
                 <input
                   value={testName}
                   onChange={(e) => setTestName(e.target.value)}
-                  placeholder="test_function_name"
-                  className="ghost-input bg-surface-container-lowest font-mono w-full"
+                  placeholder="Leave empty to auto-extract from code"
+                  className="ghost-input bg-surface-container-lowest font-mono w-full text-on-surface-variant/60"
                 />
               </div>
 
@@ -364,7 +365,7 @@ export default function GATRPanel() {
                   className="w-full font-mono text-[13px] leading-relaxed p-4 rounded border border-outline-variant/20 bg-[#0e0e0f] text-on-surface-variant resize-y min-h-[200px] focus:outline-none focus:border-primary/40"
                 />
                 <p className="text-[10px] text-on-surface-variant/50 font-mono">
-                  💡 Tip: Include the class definition if your test is inside a class
+                  💡 Tip: Include the full test method (def test_foo or @Test public void testFoo)
                 </p>
               </div>
 

@@ -1624,19 +1624,37 @@ def gatr_repair_test():
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         
-        # Validate required fields
-        test_name = data.get('test_name', '').strip()
+        # Validate required fields - only test_code and error_message are truly required
         test_code = data.get('test_code', '').strip()
         error_message = data.get('error_message', '').strip()
-        project_name = data.get('project_name', '').strip() or 'default_project'
-        include_debug_trace = bool(data.get('include_debug_trace', True))
         
-        if not test_name:
-            return jsonify({'error': 'test_name is required'}), 400
         if not test_code:
             return jsonify({'error': 'test_code is required'}), 400
         if not error_message:
             return jsonify({'error': 'error_message is required'}), 400
+        
+        # Auto-extract test_name from test_code if not provided
+        test_name = data.get('test_name', '').strip()
+        if not test_name and test_code:
+            import re
+            # Try Python pattern: def test_something(
+            py_match = re.search(r'def\s+(test_\w+)', test_code)
+            if py_match:
+                test_name = py_match.group(1)
+                logger.info(f"Auto-extracted test_name (Python): {test_name}")
+            else:
+                # Try Java pattern: @Test ... public void testSomething(
+                java_match = re.search(r'@Test.*?public\s+void\s+(\w+)', test_code, re.DOTALL)
+                if java_match:
+                    test_name = java_match.group(1)
+                    logger.info(f"Auto-extracted test_name (Java): {test_name}")
+                else:
+                    # Fallback to generic name
+                    test_name = 'unknown_test'
+                    logger.warning("Could not auto-extract test_name, using 'unknown_test'")
+        
+        project_name = data.get('project_name', '').strip() or 'default_project'
+        include_debug_trace = bool(data.get('include_debug_trace', True))
         
         # Check if GATR engine is available
         if not gatr_engine:
