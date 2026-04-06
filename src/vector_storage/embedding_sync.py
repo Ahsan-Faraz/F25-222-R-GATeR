@@ -96,7 +96,6 @@ class EmbeddingSync:
                     'file_path': file_path,
                     'line_start': node_data.get('line_start', 0),
                     'line_end': node_data.get('line_end', 0),
-                    'code_snippet': node_data.get('code', ''),
                 })
             
             logger.info(f"Found {len(candidates)} unique entities for embedding (from {graph.number_of_nodes()} total nodes, {len(seen_keys)} unique name+file combos)")
@@ -107,6 +106,30 @@ class EmbeddingSync:
                     'vectors_synced': 0,
                     'message': 'No candidates found in knowledge graph'
                 }
+            
+            # Auto-detect repository path for code extraction
+            repo_path = self._find_repository_path()
+            if repo_path:
+                logger.info(f"Extracting code snippets from repository: {repo_path}")
+                snippets_extracted = 0
+                
+                for candidate in candidates:
+                    code_snippet = self._extract_code_snippet(
+                        file_path=candidate['file_path'],
+                        line_start=candidate['line_start'],
+                        line_end=candidate['line_end'],
+                        repo_path=repo_path
+                    )
+                    candidate['code_snippet'] = code_snippet
+                    if code_snippet:
+                        snippets_extracted += 1
+                
+                snippet_coverage = (snippets_extracted / len(candidates) * 100) if candidates else 0
+                logger.info(f"Extracted {snippets_extracted}/{len(candidates)} code snippets ({snippet_coverage:.2f}%)")
+            else:
+                logger.warning("Could not find repository path, skipping code extraction")
+                for candidate in candidates:
+                    candidate['code_snippet'] = ''
             
             # Generate embeddings using Step 5's embedding generator
             vectors_to_store = []
@@ -461,3 +484,96 @@ class EmbeddingSync:
         except Exception as e:
             logger.error(f"Error getting sync stats: {e}")
             return {'available': False, 'error': str(e)}
+    
+    def _find_repository_path(self) -> Optional[str]:
+        """
+        Auto-detect repository path
+        
+        Returns:
+            Path to repository or None
+        """
+        from pathlib import Path
+        
+        possible_paths = [
+            Path("workspace/repos"),
+            Path("repos"),
+            Path("."),
+        ]
+        
+        for base_path in possible_paths:
+            if base_path.exists() and base_path.is_dir():
+                # Find first subdirectory that looks like a repo
+                for item in base_path.iterdir():
+                    if item.is_dir() and not item.name.startswith('.'):
+                        logger.debug(f"Found potential repository at: {item}")
+                        return str(item)
+        
+        return None
+    
+    def _extract_code_snippet(self, file_path: str, line_start: int, line_end: int, repo_path: Optional[str], max_lines: int = 20) -> str:
+        """
+        Extract code snippet from file in the repository
+        
+        Args:
+            file_path: Relative file path from entity metadata
+            line_start: Starting line number (1-indexed)
+            line_end: Ending line number (1-indexed)
+            repo_path: Path to repository
+            max_lines: Maximum lines to extract
+        
+        Returns:
+            Extracted code snippet or empty string
+        """
+        if not file_path or not repo_path:
+            return ''
+        
+        try:
+            from pathlib import Path
+            repo = Path(repo_path)
+            
+            # Try multiple path resolution strategies
+            full_path = None
+            
+            # Strategy 1: Direct path relative to repo
+            candidate = repo / file_path
+            if candidate.exists():
+                full_path = candidate
+            
+            # Strategy 2: Remove leading path components
+            if not full_path:
+                parts = Path(file_path).parts
+                for i in range(len(parts)):
+                    candidate = repo / Path(*parts[i:])
+                    if candidate.exists():
+                        full_path = candidate
+                        break
+            
+            # Strategy 3: Search for filename in repo
+            if not full_path:
+                filename = Path(file_path).name
+                for found_file in repo.rglob(filename):
+                    if found_file.is_file():
+                        full_path = found_file
+                        break
+            
+            if not full_path or not full_path.exists():
+                return ''
+            
+            # Read file and extract lines
+            lines = full_path.read_text(encoding='utf-8', errors='ignore').splitlines()
+            if not lines:
+                return ''
+            
+            if line_start and line_end and line_start > 0 and line_end >= line_start:
+                # Extract specified range
+                start = max(0, line_start - 1)
+                end = min(len(lines), line_end)
+                snippet = lines[start:end]
+                return '\n'.join(snippet[:max_lines]).strip()
+            
+            # Fallback: return first max_lines from file
+            return '\n'.join(lines[:max_lines]).strip()
+            
+        except Exception as e:
+            logger.debug(f"Failed to extract snippet from {file_path}: {e}")
+            return ''
