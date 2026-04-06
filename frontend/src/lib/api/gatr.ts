@@ -8,32 +8,19 @@ export async function getGATRStatus() {
 }
 
 export async function repairTest(body: Record<string, unknown>) {
-  // Create an AbortController for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+  // Use the new API route with increased timeout instead of direct proxy
+  const response = await fetch('/api/gatr-repair', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 
-  try {
-    const result = await apiJson<{
-      success?: boolean;
-      repair_id?: string;
-      error?: string;
-      message?: string;
-      [key: string]: unknown;
-    }>('/gatr/repair', {
-      method: 'POST',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-    return result;
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('Request timeout - LLM is taking longer than expected. Please try again.');
-    }
-    throw error;
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(errorData.error || `HTTP ${response.status}`);
   }
+
+  return response.json();
 }
 
 export async function getTestContext(body: Record<string, unknown>) {
