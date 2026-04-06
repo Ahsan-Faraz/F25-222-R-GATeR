@@ -464,6 +464,105 @@ class GATREngine:
 
         return dedup_lines[:3], dedup_numbers[:3]
 
+    def _extract_entity_relations(self, entity_ids: List[str], max_relations: int = 20) -> List[Dict]:
+        """
+        Extract Kuzu relations for top entities.
+        Returns relations like CALLS, MODIFIES, TESTS, etc.
+        
+        Args:
+            entity_ids: List of entity IDs to get relations for
+            max_relations: Maximum number of relations to return
+            
+        Returns:
+            List of relation dicts with source, target, type
+        """
+        if not self.kg_manager or not entity_ids:
+            return []
+        
+        try:
+            graph = getattr(self.kg_manager, 'graph', None)
+            if not graph:
+                return []
+            
+            relations = []
+            seen_relations = set()
+            
+            # Priority relation types for test repair
+            priority_types = {'CALLS', 'MODIFIES', 'TESTS', 'USES', 'RETURNS', 'THROWS'}
+            
+            for entity_id in entity_ids[:15]:  # Limit to top 15 entities
+                if entity_id not in graph:
+                    continue
+                
+                # Get outgoing edges (entity -> target)
+                for target in graph.successors(entity_id):
+                    edge_data = graph.get_edge_data(entity_id, target) or {}
+                    edge_types = edge_data.get('types', set())
+                    if not edge_types:
+                        edge_types = {edge_data.get('type', 'RELATES')}
+                    
+                    for rel_type in edge_types:
+                        rel_key = (entity_id, target, rel_type)
+                        if rel_key in seen_relations:
+                            continue
+                        seen_relations.add(rel_key)
+                        
+                        # Get entity names
+                        source_name = graph.nodes[entity_id].get('name', entity_id)
+                        target_name = graph.nodes[target].get('name', target)
+                        
+                        # Prioritize important relation types
+                        priority = 1 if rel_type in priority_types else 0
+                        
+                        relations.append({
+                            'source_id': entity_id,
+                            'target_id': target,
+                            'source_name': source_name,
+                            'target_name': target_name,
+                            'type': rel_type,
+                            'priority': priority
+                        })
+                
+                # Get incoming edges (source -> entity)
+                for source in graph.predecessors(entity_id):
+                    edge_data = graph.get_edge_data(source, entity_id) or {}
+                    edge_types = edge_data.get('types', set())
+                    if not edge_types:
+                        edge_types = {edge_data.get('type', 'RELATES')}
+                    
+                    for rel_type in edge_types:
+                        rel_key = (source, entity_id, rel_type)
+                        if rel_key in seen_relations:
+                            continue
+                        seen_relations.add(rel_key)
+                        
+                        # Get entity names
+                        source_name = graph.nodes[source].get('name', source)
+                        target_name = graph.nodes[entity_id].get('name', entity_id)
+                        
+                        # Prioritize important relation types
+                        priority = 1 if rel_type in priority_types else 0
+                        
+                        relations.append({
+                            'source_id': source,
+                            'target_id': entity_id,
+                            'source_name': source_name,
+                            'target_name': target_name,
+                            'type': rel_type,
+                            'priority': priority
+                        })
+            
+            # Sort by priority (priority types first) and limit
+            relations.sort(key=lambda r: r['priority'], reverse=True)
+            relations = relations[:max_relations]
+            
+            self.logger.info(f"Extracted {len(relations)} relations for {len(entity_ids)} entities")
+            return relations
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to extract entity relations: {e}")
+            return []
+
     def _extract_local_snippet(self, file_path: str, line_start: int = 0, line_end: int = 0, max_lines: int = 40) -> str:
         """Best-effort local snippet extraction when graph/vector metadata lacks code_snippet."""
         if not file_path:
@@ -674,7 +773,13 @@ class GATREngine:
                 'usage_examples': len(raw_context.get('usage_examples', [])),
                 'conventions_detected': list(raw_context.get('conventions', {}).keys()),
                 'top_entities': [
-                    {'name': e.get('entity_name', ''), 'type': e.get('entity_type', ''), 'score': e.get('relevance_score', 0)}
+                    {
+                        'name': e.get('entity_name', ''),
+                        'type': e.get('entity_type', ''),
+                        'score': e.get('relevance_score', e.get('score', 0)),
+                        'src': e.get('source', 'unknown'),  # ← ADD SOURCE
+                        'has_snippet': bool(e.get('code_snippet', ''))  # ← ADD SNIPPET FLAG
+                    }
                     for e in raw_context.get('entities', [])[:10]
                 ],
                 'top_semantic_hits': [
@@ -693,21 +798,36 @@ class GATREngine:
             
             compressed_context = self._compress_context(broken_test, error_message, raw_context)
             
+            # Log entity flow after compression
+            entities_with_snippets = sum(1 for e in compressed_context.top_entities if e.compressed_snippet)
+            self.logger.info(
+                "[ENTITY_FLOW] After compression: %d entities, %d with compressed_snippet (%.1f%%)",
+                len(compressed_context.top_entities) if compressed_context.top_entities else 0,
+                entities_with_snippets,
+                (entities_with_snippets / len(compressed_context.top_entities) * 100) if compressed_context.top_entities else 0
+            )
+            
             compressed_context_details = {
                 'step_2_1_hybrid_scoring': {
                     'total_scored': len(compressed_context.top_entities) if compressed_context.top_entities else 0,
-                    'kgcompass_weight': 0.7,
-                    'semantic_weight': 0.3
+                    'kgcompass_weight': 0.4,  # Updated to match actual weights
+                    'semantic_weight': 0.6
                 },
                 'step_2_2_entity_filtering': {
                     'entities_after_filter': len(compressed_context.top_entities) if compressed_context.top_entities else 0,
+                    'filtered_out': 0,  # Will be calculated if we track it
                     'top_entities': [
                         {'name': e.entity_name, 'type': e.entity_type, 'score': round(e.combined_score, 4)}
                         for e in (compressed_context.top_entities or [])[:10]
                     ]
                 },
                 'step_2_3_snippet_compression': {
-                    'snippets_retained': len(compressed_context.compressed_snippets) if compressed_context.compressed_snippets else 0
+                    'input_entities': len(compressed_context.top_entities) if compressed_context.top_entities else 0,
+                    'raw_snippets': len(raw_context.get('snippets', [])),
+                    'snippets_retained': len(compressed_context.compressed_snippets) if compressed_context.compressed_snippets else 0,
+                    'missing_snippets': 0,  # Will be logged during compression
+                    'fallback_extractions': 0,  # Will be logged during compression
+                    'fallback_used': False
                 },
                 'step_2_4_test_pattern_compression': {
                     'patterns_detected': compressed_context.compressed_patterns if compressed_context.compressed_patterns else {}
@@ -767,7 +887,8 @@ class GATREngine:
                 broken_test,
                 error_message,
                 compressed_context,
-                aggregated_context
+                aggregated_context,
+                raw_context
             )
 
             original_code = broken_test.get('test_code', '') if isinstance(broken_test, dict) else str(broken_test)
@@ -1110,7 +1231,52 @@ class GATREngine:
         query = " ".join(query_parts) if query_parts else f"{test_name} {error_message[:200]}"
         self.logger.info(f"Semantic search query: {query}")
         
-        # Get entities from knowledge graph
+        # ===== STEP 1A: Get semantic hits from vector storage FIRST =====
+        # This allows us to cross-reference with kg_seed entities
+        semantic_hits_map = {}  # Map entity_name -> code_snippet for cross-reference
+        
+        if self.vector_storage:
+            try:
+                search_result = self.vector_storage.search_similar_entities(query, top_k=20)
+                for hit in self._normalize_vector_hits(search_result):
+                    if self._is_noise_entity(hit.get('entity_name', ''), hit.get('entity_type', ''), error_info):
+                        continue
+                    
+                    entity_name = hit.get('entity_name', '')
+                    entity_id = hit.get('entity_id', '')
+                    code_snippet = hit.get('code_snippet', '')
+                    
+                    # Store in map for cross-reference
+                    if entity_name and code_snippet:
+                        semantic_hits_map[entity_name] = code_snippet
+                    if entity_id and code_snippet:
+                        semantic_hits_map[entity_id] = code_snippet
+                    
+                    raw_context['semantic_hits'].append({
+                        'entity_id': entity_id,
+                        'entity_name': entity_name,
+                        'score': hit.get('relevance_score', 0),
+                        'code_snippet': code_snippet,
+                        'semantic_similarity': hit.get('semantic_similarity', 0)
+                    })
+                    raw_context['snippets'].append({
+                        'entity_id': entity_id,
+                        'code': code_snippet
+                    })
+                    raw_context['entities'].append({
+                        'entity_id': entity_id,
+                        'entity_name': entity_name,
+                        'entity_type': hit.get('entity_type', 'unknown'),
+                        'file_path': hit.get('file_path', ''),
+                        'score': hit.get('relevance_score', 0.0),
+                        'semantic_similarity': hit.get('semantic_similarity', 0.0),
+                        'source': 'vector'
+                    })
+            except Exception as e:
+                self.logger.warning(f"Failed to get vector context: {e}")
+        
+        # ===== STEP 1B: Get entities from knowledge graph =====
+        # Cross-reference with semantic_hits_map to get code snippets
         if self.kg_manager:
             try:
                 # Get entities related to the test (keyword-aware rather than first-N nodes).
@@ -1141,22 +1307,66 @@ class GATREngine:
                     selected = scored_nodes[:120]
 
                     for relevance_score, node_id, node_data in selected:
-                        node_snippet = node_data.get('code_snippet', node_data.get('code', ''))
+                        entity_name = node_data.get('name', node_id)
+                        
+                        # CRITICAL FIX: Cross-reference with LanceDB for code snippets
+                        node_snippet = ''
+                        snippet_source = 'none'
+                        
+                        # Try to find snippet in semantic_hits_map (by name or ID)
+                        if entity_name in semantic_hits_map:
+                            node_snippet = semantic_hits_map[entity_name]
+                            snippet_source = 'lancedb_crossref_name'
+                            self.logger.debug(f"[KG_SEED_SNIPPET] Found snippet for {entity_name} via LanceDB cross-reference (by name)")
+                        elif node_id in semantic_hits_map:
+                            node_snippet = semantic_hits_map[node_id]
+                            snippet_source = 'lancedb_crossref_id'
+                            self.logger.debug(f"[KG_SEED_SNIPPET] Found snippet for {entity_name} via LanceDB cross-reference (by ID)")
+                        
+                        # Targeted lookup: search LanceDB directly for this entity by name
+                        if not node_snippet and self.vector_storage:
+                            try:
+                                targeted_result = self.vector_storage.search_similar_entities(entity_name, top_k=3)
+                                for hit in self._normalize_vector_hits(targeted_result):
+                                    hit_name = hit.get('entity_name', '')
+                                    hit_snippet = hit.get('code_snippet', '')
+                                    if hit_snippet and (hit_name == entity_name or hit_name.endswith(f'.{entity_name}')):
+                                        node_snippet = hit_snippet
+                                        snippet_source = 'lancedb_targeted'
+                                        self.logger.debug(
+                                            f"[KG_SEED_SNIPPET] Targeted lookup found snippet for {entity_name}"
+                                        )
+                                        break
+                            except Exception as _e:
+                                self.logger.debug(f"[KG_SEED_SNIPPET] Targeted lookup failed for {entity_name}: {_e}")
+                        
+                        # Fallback: extract from file system if we have valid file_path
                         if not node_snippet:
-                            node_snippet = self._extract_local_snippet(
-                                file_path=node_data.get('file_path', ''),
-                                line_start=node_data.get('line_start', 0),
-                                line_end=node_data.get('line_end', 0),
-                            )
+                            file_path = node_data.get('file_path', '')
+                            line_start = node_data.get('line_start', 0)
+                            line_end = node_data.get('line_end', 0)
+                            
+                            if file_path and line_start > 0 and line_end >= line_start:
+                                node_snippet = self._extract_local_snippet(
+                                    file_path=file_path,
+                                    line_start=line_start,
+                                    line_end=line_end,
+                                )
+                                if node_snippet:
+                                    snippet_source = 'file_fallback'
+                                    self.logger.debug(f"[KG_SEED_SNIPPET] Extracted snippet for {entity_name} from file system")
 
                         raw_context['entities'].append({
                             'entity_id': node_id,
-                            'entity_name': node_data.get('name', node_id),
+                            'entity_name': entity_name,
                             'entity_type': node_data.get('type', 'unknown'),
                             'file_path': node_data.get('file_path', ''),
+                            'line_start': node_data.get('line_start', 0),
+                            'line_end': node_data.get('line_end', 0),
                             'relevance_score': relevance_score,
                             'source': 'kg_seed',
                             'code_snippet': node_snippet,
+                            'snippet_source': snippet_source,
                         })
 
                         if node_snippet:
@@ -1186,36 +1396,6 @@ class GATREngine:
                             })
             except Exception as e:
                 self.logger.warning(f"Failed to get KG context: {e}")
-        
-        # Get semantic hits from vector storage
-        if self.vector_storage:
-            try:
-                search_result = self.vector_storage.search_similar_entities(query, top_k=20)
-                for hit in self._normalize_vector_hits(search_result):
-                    if self._is_noise_entity(hit.get('entity_name', ''), hit.get('entity_type', ''), error_info):
-                        continue
-                    raw_context['semantic_hits'].append({
-                        'entity_id': hit.get('entity_id', ''),
-                        'entity_name': hit.get('entity_name', ''),
-                        'score': hit.get('relevance_score', 0),
-                        'code_snippet': hit.get('code_snippet', ''),
-                        'semantic_similarity': hit.get('semantic_similarity', 0)
-                    })
-                    raw_context['snippets'].append({
-                        'entity_id': hit.get('entity_id', ''),
-                        'code': hit.get('code_snippet', '')
-                    })
-                    raw_context['entities'].append({
-                        'entity_id': hit.get('entity_id', ''),
-                        'entity_name': hit.get('entity_name', ''),
-                        'entity_type': hit.get('entity_type', 'unknown'),
-                        'file_path': hit.get('file_path', ''),
-                        'score': hit.get('relevance_score', 0.0),
-                        'semantic_similarity': hit.get('semantic_similarity', 0.0),
-                        'source': 'vector'
-                    })
-            except Exception as e:
-                self.logger.warning(f"Failed to get vector context: {e}")
         
         # Get KGCompass relevance scores
         if self.relevance_scorer and self.kg_manager:
@@ -1295,16 +1475,37 @@ class GATREngine:
                         for score in relevance_scores:
                             if self._is_noise_entity(score.entity_name, score.entity_type, error_info):
                                 continue
+                            
+                            # CRITICAL FIX: Always attempt to populate code_snippet
+                            # Use file system fallback if missing, never leave undefined
+                            node_snippet = getattr(score, 'code_snippet', '') or getattr(score, 'code', '')
+                            if not node_snippet and score.file_path:
+                                node_snippet = self._extract_local_snippet(
+                                    file_path=score.file_path,
+                                    line_start=getattr(score, 'line_start', 0),
+                                    line_end=getattr(score, 'line_end', 0),
+                                )
+                            
                             raw_context['entities'].append({
                                 'entity_id': score.entity_id,
                                 'entity_name': score.entity_name,
                                 'entity_type': score.entity_type,
                                 'file_path': score.file_path,
+                                'line_start': getattr(score, 'line_start', 0),
+                                'line_end': getattr(score, 'line_end', 0),
                                 'score': score.total_score,
                                 'semantic_similarity': score.semantic_similarity,
                                 'textual_similarity': score.textual_similarity,
+                                'code_snippet': node_snippet or '',
                                 'source': 'kgcompass'
                             })
+                            
+                            # Add to snippets list for compression step
+                            if node_snippet:
+                                raw_context['snippets'].append({
+                                    'entity_id': score.entity_id,
+                                    'code': node_snippet,
+                                })
             except Exception as e:
                 self.logger.warning(f"Failed to get relevance scores: {e}")
         
@@ -1313,15 +1514,36 @@ class GATREngine:
         
         # Lightweight diagnostics to debug relevance quality.
         source_counts = {}
+        snippet_counts = {}
         for ent in raw_context['entities']:
             src = ent.get('source', 'unknown')
             source_counts[src] = source_counts.get(src, 0) + 1
+            has_snippet = bool(ent.get('code_snippet', ''))
+            snippet_counts[src] = snippet_counts.get(src, 0) + (1 if has_snippet else 0)
+        
+        total_entities = len(raw_context['entities'])
+        entities_with_snippets = sum(1 for e in raw_context['entities'] if e.get('code_snippet'))
+        snippet_coverage = entities_with_snippets / total_entities if total_entities > 0 else 0
+        
         self.logger.info(
             "Raw context summary: %d entities, %d semantic hits, source breakdown=%s",
             len(raw_context['entities']),
             len(raw_context['semantic_hits']),
             source_counts,
         )
+        self.logger.info(
+            "[SNIPPET_COVERAGE] Raw ingestion: %d/%d entities have snippets (%.2f%%) | by source: %s",
+            entities_with_snippets,
+            total_entities,
+            snippet_coverage * 100,
+            snippet_counts,
+        )
+        if snippet_coverage < 0.6:
+            self.logger.warning(
+                "[SNIPPET_COVERAGE] Low snippet coverage (%.2f%%) - repair quality may degrade",
+                snippet_coverage * 100
+            )
+        
         if raw_context['entities']:
             top_debug = sorted(
                 raw_context['entities'],
@@ -2046,22 +2268,35 @@ class GATREngine:
             'model': self.lm_studio_model,
             'provider': 'lm_studio',
             'endpoint': self.lm_studio_url,
-            'temperature': 0.2
+            'temperature': 0.2,
+            'entities_with_snippets': [
+                {
+                    'name': e.get('name', '') or '',
+                    'type': e.get('type', '') or '',
+                    'score': round(float(e.get('score', 0) or 0), 4),
+                    'has_snippet': bool((e.get('code_snippet') or '').strip()),
+                    'snippet_length': len((e.get('code_snippet') or '').strip())
+                }
+                for e in (augmented_context.get('entities') or [])
+                if (e.get('code_snippet') or '').strip()
+            ],
+            'total_entities': len(augmented_context.get('entities') or []),
+            'entities_with_code': len([e for e in (augmented_context.get('entities') or []) if (e.get('code_snippet') or '').strip()])
         }
         
         self.logger.debug(f"GraphRAG prompt length: {len(user_prompt)} chars (system: {len(system_message)} chars)")
 
         prompt_snippets = [
-            (e.get('code_snippet', '') or '').strip()
-            for e in augmented_context.get('entities', [])
-            if (e.get('code_snippet', '') or '').strip()
+            (e.get('code_snippet') or '').strip()
+            for e in (augmented_context.get('entities') or [])
+            if (e.get('code_snippet') or '').strip()
         ]
         prompt_snippets = prompt_snippets[:10]
-        failing_line = (augmented_context.get('failing_line', '') or '').strip()
+        failing_line = (augmented_context.get('failing_line') or '').strip()
         failing_line_present = bool(failing_line and failing_line in user_prompt)
         top_entities = sorted(
-            augmented_context.get('entities', []),
-            key=lambda e: e.get('score', 0),
+            augmented_context.get('entities') or [],
+            key=lambda e: e.get('score') or 0,
             reverse=True,
         )[:10]
 
@@ -2069,24 +2304,24 @@ class GATREngine:
             "Prompt diagnostics: snippet_count=%d failing_line_present=%s failing_line=%s",
             len(prompt_snippets),
             failing_line_present,
-            failing_line[:180],
+            (failing_line or '')[:180],
         )
         self.logger.info(
             "Prompt entities (top10): %s",
             [
                 {
-                    'name': e.get('name', ''),
-                    'type': e.get('type', ''),
-                    'score': round(float(e.get('score', 0) or 0), 4),
-                    'semantic': round(float(e.get('semantic_score', e.get('semantic_similarity', 0)) or 0), 4),
-                    'kg': round(float(e.get('kgcompass_score', e.get('kg_compass_score', 0)) or 0), 4),
+                    'name': e.get('name') or '',
+                    'type': e.get('type') or '',
+                    'score': round(float(e.get('score') or 0), 4),
+                    'semantic': round(float(e.get('semantic_score') or e.get('semantic_similarity') or 0), 4),
+                    'kg': round(float(e.get('kgcompass_score') or e.get('kg_compass_score') or 0), 4),
                 }
                 for e in top_entities
             ],
         )
         self.logger.info(
             "Prompt snippets sent (first lines): %s",
-            [s.split('\n')[0][:180] for s in prompt_snippets],
+            [s.split('\n')[0][:180] if s else '' for s in prompt_snippets],
         )
         
         # Call LLM
@@ -2110,7 +2345,14 @@ class GATREngine:
     def _create_graphrag_prompt(self, augmented_context: Dict, error_info: Dict) -> Tuple[str, str]:
         """
         Create a high-quality system + user prompt pair using full GraphRAG context.
-
+        Manages token budget for Qwen (4000 tokens max).
+        
+        Priority:
+        1. Broken test + error (always included)
+        2. Top entities with code snippets
+        3. Relations for top entities
+        4. Canonical usage patterns
+        
         Returns:
             Tuple of (system_message, user_prompt)
         """
@@ -2143,21 +2385,34 @@ class GATREngine:
         # ── Build the annotated broken test with change markers ──
         annotated_code = self._annotate_broken_lines(test_code, broken_lines, broken_line_numbers, language)
 
-        # ── Build KG entity context ──
+        # ── Filter and sort entities ──
         entities = augmented_context.get('entities', [])
         entities = [
             e for e in entities
             if self._is_prompt_relevant_entity(e, error_info)
         ]
         entities.sort(key=lambda e: e.get('score', 0), reverse=True)
-        entities = entities[:10]
-        entity_section = self._build_entity_section(entities)
-
-        # ── Build API delta section ──
-        api_deltas = augmented_context.get('api_deltas', [])
-        delta_section = self._build_delta_section(api_deltas)
-
-        # ── Build broken lines section ──
+        
+        # ── Extract relations for top entities (Kuzu) ──
+        entity_ids = [e.get('id', '') for e in entities[:12] if e.get('id')]
+        entity_relations = self._extract_entity_relations(entity_ids, max_relations=15)
+        
+        # ── Token budget management (Qwen 4000 tokens) ──
+        # Rough estimate: 1 token ≈ 4 characters
+        # Reserve 500 tokens for LLM output
+        MAX_PROMPT_TOKENS = 3500
+        MAX_PROMPT_CHARS = MAX_PROMPT_TOKENS * 4  # ~14000 chars
+        
+        # Priority 1: Core context (always included)
+        core_sections = []
+        core_sections.append(f"## TEST INFORMATION\n- Test: {augmented_context.get('test', '')}\n- File: {test_file}\n- Language: {language.upper()}\n- Failure Type: {verdict_status}\n- Change Type: {hunk_type}\n")
+        core_sections.append(f"## ERROR MESSAGE\n{error}\n")
+        core_sections.append(f"## BROKEN TEST CODE (lines marked with >>> MUST be changed)\n```{language}\n{annotated_code}\n```\n")
+        
+        core_text = "\n".join(core_sections)
+        current_chars = len(core_text)
+        
+        # Priority 2: Broken lines section
         broken_section = ""
         if broken_lines:
             broken_section = "\n## LINES THAT NEED TO CHANGE\n"
@@ -2166,13 +2421,17 @@ class GATREngine:
                 ln = broken_line_numbers[i] if i < len(broken_line_numbers) else "?"
                 broken_section += f"  Line {ln}: {line}\n"
             broken_section += "\nYou MUST change at least these lines. Do NOT return them as-is.\n"
-
+        current_chars += len(broken_section)
+        
+        # Priority 3: Failing line section
         failing_line_section = ""
         if failing_line:
             failing_line_section = "\n## CONFIRMED FAILING LINE\n"
             failing_line_section += f"{failing_line}\n"
             failing_line_section += "This exact line must be fixed with a minimal change.\n"
-
+        current_chars += len(failing_line_section)
+        
+        # Priority 4: Error hint
         error_hint_section = ""
         if re.search(r'IndexOutOfBoundsException|out of bounds', error, re.IGNORECASE):
             error_hint_section = (
@@ -2181,19 +2440,80 @@ class GATREngine:
                 "Check collection size and ensure index is within bounds. "
                 "Prefer minimal fix by adjusting index.\n"
             )
-
-        # ── Build canonical usage / similar test patterns ──
+        current_chars += len(error_hint_section)
+        
+        # Priority 5: Entities with code snippets (limit based on budget)
+        remaining_chars = MAX_PROMPT_CHARS - current_chars
+        entity_budget_chars = int(remaining_chars * 0.6)  # 60% for entities
+        
+        self.logger.info(f"[TOKEN_BUDGET] Entity budget: {entity_budget_chars} chars, {len(entities)} entities available")
+        
+        # Truncate entities to fit budget
+        entities_to_include = []
+        entity_chars = 0
+        for entity in entities:
+            snippet = entity.get('code_snippet', '')
+            # Estimate entity section size
+            entity_size = len(entity.get('name', '')) + len(snippet) + 200  # +200 for formatting
+            if entity_chars + entity_size > entity_budget_chars:
+                self.logger.debug(f"[TOKEN_BUDGET] Stopping at entity {len(entities_to_include)}: budget exceeded ({entity_chars + entity_size} > {entity_budget_chars})")
+                break
+            entities_to_include.append(entity)
+            entity_chars += entity_size
+        
+        self.logger.info(f"[TOKEN_BUDGET] Including {len(entities_to_include)}/{len(entities)} entities (budget: {entity_budget_chars} chars, used: {entity_chars} chars)")
+        
+        # Priority 6: Relations (limit based on remaining budget)
+        remaining_chars = MAX_PROMPT_CHARS - current_chars - entity_chars
+        relation_budget_chars = int(remaining_chars * 0.5)  # 50% of remaining for relations
+        
+        relations_to_include = []
+        relation_chars = 0
+        for rel in entity_relations:
+            rel_size = len(rel.get('source_name', '')) + len(rel.get('target_name', '')) + 50
+            if relation_chars + rel_size > relation_budget_chars:
+                break
+            relations_to_include.append(rel)
+            relation_chars += rel_size
+        
+        self.logger.info(f"[TOKEN_BUDGET] Including {len(relations_to_include)}/{len(entity_relations)} relations (budget: {relation_budget_chars} chars, used: {relation_chars} chars)")
+        
+        # Build entity section with relations
+        entity_section = self._build_entity_section(entities_to_include, relations_to_include)
+        current_chars += len(entity_section)
+        
+        # Priority 7: API deltas (if space remains)
+        api_deltas = augmented_context.get('api_deltas', [])
+        delta_section = ""
+        if api_deltas and (MAX_PROMPT_CHARS - current_chars) > 500:
+            delta_section = self._build_delta_section(api_deltas)
+            current_chars += len(delta_section)
+        
+        # Priority 8: Usage patterns (if space remains)
         usage_section = ""
         canonical_usages = augmented_context.get('canonical_usages', [])
-        if canonical_usages:
+        if canonical_usages and (MAX_PROMPT_CHARS - current_chars) > 500:
             usage_section = "\n## CORRECT USAGE PATTERNS FROM CODEBASE\n"
+            usage_chars = 0
+            usage_budget = MAX_PROMPT_CHARS - current_chars - 200  # Reserve 200 for task section
             for i, usage in enumerate(canonical_usages[:5], 1):
                 pattern = usage.get('usage_pattern', '')
                 example = usage.get('example_code', '')
                 if example:
-                    usage_section += f"{i}. {pattern}\n   ```{language}\n   {example}\n   ```\n"
+                    usage_text = f"{i}. {pattern}\n   ```{language}\n   {example}\n   ```\n"
+                    if usage_chars + len(usage_text) > usage_budget:
+                        break
+                    usage_section += usage_text
+                    usage_chars += len(usage_text)
                 elif pattern:
-                    usage_section += f"{i}. {pattern}\n"
+                    usage_text = f"{i}. {pattern}\n"
+                    if usage_chars + len(usage_text) > usage_budget:
+                        break
+                    usage_section += usage_text
+                    usage_chars += len(usage_text)
+            current_chars += len(usage_section)
+        
+        self.logger.info(f"[TOKEN_BUDGET] Final prompt size: {current_chars} chars (~{current_chars // 4} tokens) / {MAX_PROMPT_CHARS} chars budget")
 
         # ── System message ──
         system_message = f"""You are GATR (Graph-Aware Test Repair), an expert automated test repair system for {language.upper()} projects.
@@ -2212,21 +2532,7 @@ CRITICAL RULES:
         # ── User prompt ──
         user_prompt = f"""# BROKEN TEST REPAIR REQUEST
 
-## TEST INFORMATION
-- Test: {augmented_context.get('test', '')}
-- File: {test_file}
-- Language: {language.upper()}
-- Failure Type: {verdict_status}
-- Change Type: {hunk_type}
-
-## ERROR MESSAGE
-{error}
-
-## BROKEN TEST CODE (lines marked with >>> MUST be changed)
-```{language}
-{annotated_code}
-```
-{broken_section}{failing_line_section}{error_hint_section}{entity_section}{delta_section}{usage_section}
+{core_text}{broken_section}{failing_line_section}{error_hint_section}{entity_section}{delta_section}{usage_section}
 ## YOUR TASK
 1. Read the error message and identify what is wrong.
 2. Look at the lines marked with >>> — those are the lines that MUST change.
@@ -2267,10 +2573,33 @@ REPAIRED {language.upper()} CODE:
 
         return '\n'.join(annotated)
 
-    def _build_entity_section(self, entities: List[Dict]) -> str:
-        """Build the knowledge graph entity context section for the prompt."""
+    def _build_entity_section(self, entities: List[Dict], entity_relations: List[Dict] = None) -> str:
+        """
+        Build the knowledge graph entity context section for the prompt.
+        Includes entity code snippets and their relations from Kuzu.
+        
+        IMPORTANT: Always include entity metadata even if code_snippet is missing.
+        This ensures LLM has entity names, types, and file paths for context.
+        
+        Args:
+            entities: List of entities with code snippets
+            entity_relations: List of relations between entities (from Kuzu)
+        """
         if not entities:
+            self.logger.warning("[ENTITY_SECTION] No entities provided - section will be empty")
             return ""
+        
+        # Track snippet coverage for prompt quality
+        entities_with_code = sum(1 for e in entities[:12] if e.get('code_snippet'))
+        total_entities = min(len(entities), 12)
+        coverage = entities_with_code / total_entities if total_entities > 0 else 0
+        self.logger.info(
+            f"[SNIPPET_COVERAGE] Prompt building: {entities_with_code}/{total_entities} entities have code_snippet ({coverage:.2%})"
+        )
+        if coverage < 0.6:
+            self.logger.warning(
+                f"[SNIPPET_COVERAGE] Low snippet coverage in prompt ({coverage:.2%}) - showing entity metadata without code"
+            )
 
         section = "\n## KNOWLEDGE GRAPH CONTEXT (ranked by KGCompass + GraphRAG relevance)\n"
         section += "These entities from the project are most relevant to this repair:\n\n"
@@ -2282,18 +2611,56 @@ REPAIRED {language.upper()} CODE:
             file_path = entity.get('file_path', '')
             docstring = entity.get('docstring', '')
             snippet = entity.get('code_snippet', '')
+            is_fallback = entity.get('is_fallback', False)
 
             section += f"### {i}. {name} ({etype}) — relevance: {score:.2f}\n"
             if file_path:
                 section += f"   File: {file_path}\n"
             if docstring:
                 section += f"   Doc: {docstring[:150]}\n"
+            
+            # ALWAYS show entity, even without snippet
             if snippet:
+                # Mark fallback snippets as "less authoritative"
+                if is_fallback:
+                    section += "   [Fallback snippet - extracted from file system]\n"
                 # Show first 8 lines of code
                 snippet_lines = snippet.strip().split('\n')[:8]
                 section += "   ```\n   " + "\n   ".join(snippet_lines) + "\n   ```\n"
+            else:
+                # No snippet available - show placeholder
+                section += "   [No code snippet available - entity metadata only]\n"
             section += "\n"
-
+        
+        # Add relations section if available
+        if entity_relations:
+            section += "\n## ENTITY RELATIONS (from Kuzu Knowledge Graph)\n"
+            section += "These relations show how entities interact:\n\n"
+            
+            for i, rel in enumerate(entity_relations[:15], 1):  # Limit to 15 relations
+                source = rel.get('source_name', '')
+                target = rel.get('target_name', '')
+                rel_type = rel.get('type', 'RELATES')
+                
+                # Format relation based on type
+                if rel_type == 'CALLS':
+                    section += f"{i}. {source} calls {target}\n"
+                elif rel_type == 'MODIFIES':
+                    section += f"{i}. {source} modifies {target}\n"
+                elif rel_type == 'TESTS':
+                    section += f"{i}. {source} tests {target}\n"
+                elif rel_type == 'USES':
+                    section += f"{i}. {source} uses {target}\n"
+                elif rel_type == 'RETURNS':
+                    section += f"{i}. {source} returns {target}\n"
+                elif rel_type == 'THROWS':
+                    section += f"{i}. {source} throws {target}\n"
+                else:
+                    section += f"{i}. {source} → {target} ({rel_type})\n"
+            
+            section += "\n"
+        
+        self.logger.info(f"[ENTITY_SECTION] Built section with {min(len(entities), 12)} entities, {len(entity_relations) if entity_relations else 0} relations, {len(section)} chars")
         return section
 
     def _build_delta_section(self, api_deltas: List[Dict]) -> str:
@@ -2329,11 +2696,15 @@ REPAIRED {language.upper()} CODE:
         graph-traversal + semantic scores.  We interleave them so the prompt benefits
         from both, with KGCompass entities prioritised.
         """
+        self.logger.info(f"[MERGE_ENTITIES] Input: {len(graphrag_entities)} GraphRAG entities")
+        
         # Collect entity IDs already present from GraphRAG
         seen_ids = {e.get('id', '') for e in graphrag_entities}
 
         kgcompass_entities = []
         top_entities = getattr(compressed_context, 'top_entities', None) or []
+        
+        self.logger.info(f"[MERGE_ENTITIES] KGCompass top_entities: {len(top_entities)}")
 
         for ce in top_entities:
             if ce.entity_id in seen_ids:
@@ -2347,6 +2718,9 @@ REPAIRED {language.upper()} CODE:
                         break
             else:
                 seen_ids.add(ce.entity_id)
+                # CRITICAL FIX: Replace silent fallback with explicit signal
+                # Do NOT silently replace missing snippet with empty string
+                # Preserve signal for debugging and scoring
                 kgcompass_entities.append({
                     'id': ce.entity_id,
                     'name': ce.entity_name,
@@ -2355,7 +2729,8 @@ REPAIRED {language.upper()} CODE:
                     'score': ce.combined_score,
                     'kgcompass_score': ce.kg_compass_score,
                     'relationship': 'kgcompass_ranked',
-                    'code_snippet': ce.compressed_snippet or '',
+                    'code_snippet': ce.compressed_snippet if ce.compressed_snippet else None,
+                    'is_fallback': getattr(ce, 'is_fallback', False),
                     'usage_examples': [],
                     'docstring': ''
                 })
@@ -2365,7 +2740,7 @@ REPAIRED {language.upper()} CODE:
                         key=lambda e: e.get('score', 0), reverse=True)
 
         self.logger.info(
-            f"Merged entities: {len(kgcompass_entities)} KGCompass + "
+            f"[MERGE_ENTITIES] Result: {len(kgcompass_entities)} KGCompass + "
             f"{len(graphrag_entities)} GraphRAG → {len(merged)} total"
         )
         return merged
@@ -2434,7 +2809,8 @@ REPAIRED {language.upper()} CODE:
                           broken_test: Dict,
                           error_message: str,
                           compressed_context: CompressedContext,
-                          aggregated_context: Dict) -> Tuple[str, str, Dict]:
+                          aggregated_context: Dict,
+                          raw_context: Dict) -> Tuple[str, str, Dict]:
         """
         Step 4: Generate Repaired Test using GraphRAG 3-Step approach
         
@@ -2464,6 +2840,37 @@ REPAIRED {language.upper()} CODE:
         # so the prompt builder can use them
         augmented_context['api_deltas'] = aggregated_context.get('api_deltas', [])
         augmented_context['canonical_usages'] = aggregated_context.get('canonical_usages', [])
+        
+        # Merge snippet-rich entities from Flow A into the graphrag augmented context.
+        # Flow B (graphrag) pulls entities from Kuzu which have no code_snippet.
+        # Flow A (raw ingestion) correctly cross-references LanceDB and has full snippet coverage
+        # for vector-source entities. Without this merge, the prompt entity section is always empty.
+        existing_entity_ids = {e.get('id', e.get('entity_id', '')) for e in augmented_context.get('entities', [])}
+        for raw_ent in raw_context.get('entities', []):
+            eid = raw_ent.get('entity_id', '')
+            if not eid or eid in existing_entity_ids:
+                continue
+            snippet = raw_ent.get('code_snippet', '')
+            if not snippet:
+                continue  # Only merge entities that actually have code
+            augmented_context['entities'].append({
+                'id': eid,
+                'name': raw_ent.get('entity_name', ''),
+                'type': raw_ent.get('entity_type', 'unknown'),
+                'file_path': raw_ent.get('file_path', ''),
+                'score': float(raw_ent.get('relevance_score', raw_ent.get('score', 0.0)) or 0.0),
+                'code_snippet': snippet,
+                'source': raw_ent.get('source', 'raw'),
+                'relationship': 'ingestion_crossref',
+                'docstring': '',
+                'usage_examples': [],
+            })
+            existing_entity_ids.add(eid)
+        
+        self.logger.info(
+            "[ENTITY_MERGE] augmented_context now has %d entities after merging raw_context",
+            len(augmented_context.get('entities', []))
+        )
         
         # ===== CRITICAL: Inject KGCompass-scored entities from Steps 1-3 =====
         # The GraphRAG Step 7 does its own graph traversal without KGCompass scores.
