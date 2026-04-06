@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Diff Algorithm</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .unchanged { color: #888; }
+        .add { color: #0f0; background: #0f0020; }
+        .remove { color: #f00; background: #f00020; }
+        pre { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h2>Diff Algorithm Test</h2>
+    <div id="output"></div>
+
+    <script>
+        function computeLCS(arr1, arr2) {
+            const m = arr1.length;
+            const n = arr2.length;
+            
+            // Create DP table
+            const dp = Array(m + 1).fill(0).map(() => Array(n + 1).fill(0));
+            
+            // Fill DP table
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    if (arr1[i - 1] === arr2[j - 1]) {
+                        dp[i][j] = dp[i - 1][j - 1] + 1;
+                    } else {
+                        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+                    }
+                }
+            }
+            
+            // Backtrack to find LCS
+            const lcs = [];
+            let i = m, j = n;
+            
+            while (i > 0 && j > 0) {
+                if (arr1[i - 1] === arr2[j - 1]) {
+                    lcs.unshift(arr1[i - 1]);
+                    i--;
+                    j--;
+                } else if (dp[i - 1][j] > dp[i][j - 1]) {
+                    i--;
+                } else {
+                    j--;
+                }
+            }
+            
+            return lcs;
+        }
+
+        function computeDiff(original, modified) {
+            const originalLines = original.split('\n');
+            const modifiedLines = modified.split('\n');
+            
+            // Use LCS for better diff
+            const lcs = computeLCS(originalLines, modifiedLines);
+            const diff = [];
+            
+            let i = 0; // Index in original
+            let j = 0; // Index in modified
+            let lcsIndex = 0; // Index in LCS
+            
+            while (i < originalLines.length || j < modifiedLines.length) {
+                // Check if current lines are in LCS (unchanged)
+                if (lcsIndex < lcs.length && 
+                    i < originalLines.length && 
+                    j < modifiedLines.length &&
+                    originalLines[i] === lcs[lcsIndex] && 
+                    modifiedLines[j] === lcs[lcsIndex]) {
+                    // Unchanged line
+                    diff.push({ type: 'unchanged', content: originalLines[i] });
+                    i++;
+                    j++;
+                    lcsIndex++;
+                } else if (lcsIndex < lcs.length && 
+                           j < modifiedLines.length && 
+                           modifiedLines[j] === lcs[lcsIndex]) {
+                    // Line was removed from original
+                    diff.push({ type: 'remove', content: originalLines[i] });
+                    i++;
+                } else if (lcsIndex < lcs.length && 
+                           i < originalLines.length && 
+                           originalLines[i] === lcs[lcsIndex]) {
+                    // Line was added to modified
+                    diff.push({ type: 'add', content: modifiedLines[j] });
+                    j++;
+                } else if (i < originalLines.length && j < modifiedLines.length) {
+                    // Both lines changed - show as remove + add
+                    diff.push({ type: 'remove', content: originalLines[i] });
+                    diff.push({ type: 'add', content: modifiedLines[j] });
+                    i++;
+                    j++;
+                } else if (i < originalLines.length) {
+                    // Only original lines left (removed)
+                    diff.push({ type: 'remove', content: originalLines[i] });
+                    i++;
+                } else if (j < modifiedLines.length) {
+                    // Only modified lines left (added)
+                    diff.push({ type: 'add', content: modifiedLines[j] });
+                    j++;
+                }
+            }
+            
+            return diff;
+        }
+
+        // Test case
+        const original = `@Test
+void testParse() {
+    String html = "<html><body>Test</body></html>";
+    Document doc = Jsoup.parse(html);
+    assertEquals("Test", doc.body().text());
+}`;
+
+        const modified = `@Test
+void testParse() {
+    String html = "<html><body>Test</body></html>";
+    Document doc = Jsoup.parse(html, "http://localhost");
+    assertEquals("Test", doc.body().text());
+}`;
+
+        const diff = computeDiff(original, modified);
+        
+        const output = document.getElementById('output');
+        
+        let html = '<h3>Original:</h3><pre>' + original + '</pre>';
+        html += '<h3>Modified:</h3><pre>' + modified + '</pre>';
+        html += '<h3>Diff:</h3>';
+        
+        diff.forEach(line => {
+            const prefix = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ';
+            html += `<pre class="${line.type}">${prefix} ${line.content}</pre>`;
+        });
+        
+        output.innerHTML = html;
+        
+        // Count changes
+        const additions = diff.filter(l => l.type === 'add').length;
+        const deletions = diff.filter(l => l.type === 'remove').length;
+        const unchanged = diff.filter(l => l.type === 'unchanged').length;
+        
+        html += `<p><strong>Summary:</strong> +${additions} additions, -${deletions} deletions, ${unchanged} unchanged</p>`;
+        output.innerHTML = html;
+    </script>
+</body>
+</html>

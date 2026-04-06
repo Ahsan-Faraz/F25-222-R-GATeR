@@ -35,7 +35,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('workspace/logs/web_server.log'),
+        logging.FileHandler('workspace/logs/web_server.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )

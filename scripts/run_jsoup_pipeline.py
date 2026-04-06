@@ -31,7 +31,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('workspace/logs/jsoup_pipeline.log')
+        logging.FileHandler('workspace/logs/jsoup_pipeline.log', encoding='utf-8')
     ]
 )
 logger = logging.getLogger('jsoup_pipeline')

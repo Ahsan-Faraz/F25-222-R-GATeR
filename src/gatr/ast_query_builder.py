@@ -23,9 +23,15 @@ class ASTQueryBuilder:
         self._parser = None
         self._language = None
     
-    def extract_broken_line_ast(self, test_code: str, error_message: str, language: str = 'java') -> Dict:
+    def extract_broken_line_ast(self, test_code: str, error_message: str, language: str = 'java', test_start_line: int = None) -> Dict:
         """
         Extract AST components from the broken line
+        
+        Args:
+            test_code: The test method code (may be just method body, not full file)
+            error_message: Stack trace with line number
+            language: Programming language (java, python, etc.)
+            test_start_line: Line number where test method starts in full file (for offset calculation)
         
         Returns:
             {
@@ -38,25 +44,25 @@ class ASTQueryBuilder:
                 'chain_pattern': str
             }
         """
-        # Extract line number from error
-        line_number = self._extract_line_number(error_message)
+        # Extract line number from error (this is the line in the FULL FILE)
+        stack_trace_line = self._extract_line_number(error_message)
         
-        # Get the broken line
-        broken_line = self._get_line_from_code(test_code, line_number)
+        # Get the broken line with offset correction
+        broken_line = self._get_line_from_code(test_code, stack_trace_line, test_start_line)
         
         if not broken_line:
-            self.logger.warning(f"Could not extract broken line from code")
+            self.logger.warning(f"Could not extract broken line from code (stack trace line: {stack_trace_line}, test start: {test_start_line})")
             return self._empty_ast_result()
         
-        self.logger.info(f"[AST_QUERY] Analyzing broken line {line_number}: {broken_line[:100]}")
+        self.logger.info(f"[AST_QUERY] Analyzing broken line {stack_trace_line}: {broken_line[:100]}")
         
         # Extract AST components based on language
         if language.lower() == 'java':
-            return self._extract_java_ast(broken_line, line_number)
+            return self._extract_java_ast(broken_line, stack_trace_line)
         elif language.lower() == 'python':
-            return self._extract_python_ast(broken_line, line_number)
+            return self._extract_python_ast(broken_line, stack_trace_line)
         else:
-            return self._extract_generic_ast(broken_line, line_number)
+            return self._extract_generic_ast(broken_line, stack_trace_line)
     
     def _extract_line_number(self, error_message: str) -> Optional[int]:
         """Extract line number from stack trace"""
@@ -72,16 +78,96 @@ class ASTQueryBuilder:
         
         return None
     
-    def _get_line_from_code(self, code: str, line_number: Optional[int]) -> Optional[str]:
-        """Extract specific line from code"""
-        if not line_number:
+    def _get_line_from_code(self, code: str, stack_trace_line: Optional[int], test_start_line: Optional[int] = None) -> Optional[str]:
+        """
+        Extract specific line from code with offset correction and text-based safety fallback.
+        
+        Strategy:
+        1. Attempt offset math (absolute line → payload line)
+        2. Safety check: Verify we didn't land on import/annotation
+        3. Text-based fallback: Search for actual executable code
+        """
+        if not stack_trace_line:
             return None
         
         lines = code.split('\n')
-        if 1 <= line_number <= len(lines):
-            return lines[line_number - 1].strip()
+        extracted = None
         
-        return None
+        # 1. Attempt Offset Math
+        if test_start_line is not None:
+            payload_line = stack_trace_line - test_start_line + 1
+            self.logger.debug(
+                f"[LINE_EXTRACTION] Offset math: {stack_trace_line} - {test_start_line} + 1 = {payload_line}"
+            )
+            if 1 <= payload_line <= len(lines):
+                extracted = lines[payload_line - 1].strip()
+                self.logger.debug(f"[LINE_EXTRACTION] Extracted via offset: '{extracted[:80]}'")
+        else:
+            # No offset available, use line number directly
+            if 1 <= stack_trace_line <= len(lines):
+                extracted = lines[stack_trace_line - 1].strip()
+                self.logger.debug(f"[LINE_EXTRACTION] Extracted directly: '{extracted[:80]}'")
+        
+        # 2. CRITICAL SAFETY CHECK: Did we hit an import or annotation?
+        if extracted and (
+            extracted.startswith("import ") or 
+            extracted.startswith("package ") or 
+            extracted.startswith("@") or
+            extracted.startswith("from ") or  # Python imports
+            extracted.startswith("//") or     # Comments
+            extracted.startswith("#") or      # Python comments
+            extracted.startswith("/*")        # Block comments
+        ):
+            self.logger.warning(
+                f"[LINE_EXTRACTION] OFFSET BUG DETECTED! Landed on: '{extracted[:80]}'"
+            )
+            self.logger.warning("[LINE_EXTRACTION] Triggering text-based fallback.")
+            extracted = None  # Invalidate the bad extraction
+        
+        # 3. TEXT-BASED FALLBACK: If math failed or hit an import, search by method name
+        if not extracted:
+            self.logger.info("[LINE_EXTRACTION] Using text-based fallback search.")
+            
+            # We want the first line that actually looks like a method call/operation
+            for line in lines:
+                stripped = line.strip()
+                
+                # Skip comments, imports, annotations, and empty lines
+                if not stripped or stripped.startswith(('/', '*', 'import ', 'package ', '@', '#', 'from ')):
+                    continue
+                
+                # Skip class/method declarations (these are signatures, not the broken line)
+                if stripped.startswith(('public ', 'private ', 'protected ', 'class ', 'interface ', 'enum ')):
+                    # But check if it's a one-liner with actual code
+                    if '{' not in stripped or stripped.count('{') != stripped.count('}'):
+                        continue
+                
+                # Skip method signatures (void, def, etc.) - these end with : or { without body
+                if re.match(r'^(public|private|protected)?\s*(static\s+)?(void|def|\w+)\s+\w+\s*\([^)]*\)\s*[:{]?\s*$', stripped):
+                    continue
+                
+                # Skip Python function definitions (def name():)
+                if stripped.startswith('def ') and stripped.endswith(':'):
+                    continue
+                
+                # If it contains an assignment or method call, it's a valid candidate
+                if '(' in stripped and ')' in stripped and not stripped.endswith((':',  '{')):
+                    extracted = stripped
+                    self.logger.info(f"[LINE_EXTRACTION] Fallback found actionable line: '{extracted[:80]}'")
+                    break
+                
+                # Also accept lines with assignments (even without method calls)
+                if '=' in stripped and not stripped.startswith(('=', '==')):
+                    extracted = stripped
+                    self.logger.info(f"[LINE_EXTRACTION] Fallback found assignment: '{extracted[:80]}'")
+                    break
+        
+        if extracted:
+            self.logger.info(f"[LINE_EXTRACTION] Final extracted line: '{extracted[:80]}'")
+        else:
+            self.logger.error("[LINE_EXTRACTION] Failed to extract any valid line")
+        
+        return extracted
     
     def _extract_java_ast(self, broken_line: str, line_number: int) -> Dict:
         """
