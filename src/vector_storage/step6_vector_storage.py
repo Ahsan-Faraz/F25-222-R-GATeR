@@ -46,6 +46,9 @@ class Step6VectorStorage:
             vector_indexer=self.vector_indexer
         )
         
+        # Cache the embedding model to avoid reloading on every search
+        self._embedding_model = None
+        
         self.logger.info(f"Initialized Step 6 Vector Storage with db_path: {db_path}")
     
     def store_embeddings(self, kg_manager=None, relevance_scorer=None) -> Dict[str, Any]:
@@ -214,9 +217,14 @@ class Step6VectorStorage:
             
             # Generate embedding for query using the same model as Step 5
             try:
-                from sentence_transformers import SentenceTransformer
-                model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-                query_embedding = model.encode(query, convert_to_numpy=True)
+                # Use cached model to avoid reloading on every search
+                if self._embedding_model is None:
+                    from sentence_transformers import SentenceTransformer
+                    self.logger.info("Loading embedding model (first time only)...")
+                    self._embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+                    self.logger.info("Embedding model loaded and cached")
+                
+                query_embedding = self._embedding_model.encode(query, convert_to_numpy=True)
                 self.logger.info(f"Generated query embedding with shape {query_embedding.shape}")
             except Exception as e:
                 self.logger.error(f"Failed to generate query embedding: {e}")
