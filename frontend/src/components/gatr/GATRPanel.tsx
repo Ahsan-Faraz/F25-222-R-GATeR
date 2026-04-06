@@ -412,6 +412,96 @@ export default function GATRPanel() {
                   </span>
                 </div>
               </div>
+
+              {/* Entity Context Summary */}
+              {repairState.result.final_rag_prompt && (
+                <div className="p-4 bg-surface-container border-b border-outline-variant/10">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MaterialIcon name="account_tree" className="text-secondary !text-[16px]" />
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-secondary">Context Used</h4>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-surface-container-highest rounded p-3 border border-outline-variant/10">
+                      <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-1">Total Entities</div>
+                      <div className="text-xl font-bold text-on-surface">
+                        {repairState.result.final_rag_prompt.total_entities || 0}
+                      </div>
+                    </div>
+                    <div className="bg-surface-container-highest rounded p-3 border border-outline-variant/10">
+                      <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-1">With Snippets</div>
+                      <div className="text-xl font-bold text-primary">
+                        {repairState.result.final_rag_prompt.entities_with_code || 0}
+                      </div>
+                    </div>
+                    <div className="bg-surface-container-highest rounded p-3 border border-outline-variant/10">
+                      <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-1">Prompt Size</div>
+                      <div className="text-xl font-bold text-tertiary">
+                        {repairState.result.final_rag_prompt.user_prompt ? 
+                          `${(repairState.result.final_rag_prompt.user_prompt.length / 1000).toFixed(1)}k` : '—'}
+                      </div>
+                    </div>
+                    <div className="bg-surface-container-highest rounded p-3 border border-outline-variant/10">
+                      <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-1">Model</div>
+                      <div className="text-sm font-mono text-on-surface truncate">
+                        {repairState.result.final_rag_prompt.model?.split('/').pop() || '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Entity List */}
+                  {repairState.result.final_rag_prompt.entities_with_snippets?.length > 0 && (
+                    <details className="mt-4">
+                      <summary className="cursor-pointer text-xs font-mono uppercase text-on-surface-variant hover:text-primary transition-colors">
+                        View {repairState.result.final_rag_prompt.entities_with_snippets.length} Entities with Code Snippets
+                      </summary>
+                      <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
+                        {repairState.result.final_rag_prompt.entities_with_snippets.map((entity: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between p-2 bg-surface-container-highest rounded border border-outline-variant/10 text-xs">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary text-[9px] font-bold font-mono shrink-0">
+                                {entity.type?.toUpperCase().slice(0, 6)}
+                              </span>
+                              <span className="font-mono text-on-surface truncate">{entity.name}</span>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <span className="text-[10px] text-on-surface-variant font-mono">
+                                {entity.snippet_length} chars
+                              </span>
+                              <span className="text-[10px] text-secondary font-mono">
+                                {entity.score?.toFixed(3)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  {/* Prompt Viewer */}
+                  {repairState.result.final_rag_prompt.user_prompt && (
+                    <details className="mt-4">
+                      <summary className="cursor-pointer text-xs font-mono uppercase text-on-surface-variant hover:text-primary transition-colors">
+                        View Full LLM Prompt
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <div>
+                          <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-2">System Message</div>
+                          <pre className="font-mono text-[11px] p-3 bg-[#0e0e0f] rounded border border-outline-variant/10 text-on-surface-variant overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                            {repairState.result.final_rag_prompt.system_message}
+                          </pre>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-mono uppercase text-on-surface-variant/70 mb-2">User Prompt</div>
+                          <pre className="font-mono text-[11px] p-3 bg-[#0e0e0f] rounded border border-outline-variant/10 text-on-surface-variant overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap">
+                            {repairState.result.final_rag_prompt.user_prompt}
+                          </pre>
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+
               {repairState.result.repaired_code && (
                 <pre className="font-mono text-[13px] p-4 overflow-x-auto text-on-surface-variant bg-[#0e0e0f] border-b border-outline-variant/10 whitespace-pre-wrap">
                   {repairState.result.repaired_code}
