@@ -28,6 +28,8 @@ class RelevanceScore:
     path_decay_factor: float
     path_info: Dict
     file_path: str = ""
+    line_start: int = 0
+    line_end: int = 0
 
 
 class RelevanceScorer:
@@ -127,7 +129,9 @@ class RelevanceScorer:
                 path_length=safe_path_length,
                 path_decay_factor=0.0,
                 path_info={},
-                file_path=candidate_entity.get('file_path', '')
+                file_path=candidate_entity.get('file_path', ''),
+                line_start=candidate_entity.get('line_start', 0),
+                line_end=candidate_entity.get('line_end', 0)
             )
         
         # Step 2: Calculate path decay factor beta^l(f)
@@ -180,7 +184,9 @@ class RelevanceScorer:
             path_length=float(path_length),
             path_decay_factor=float(path_decay_factor),
             path_info=path_info,
-            file_path=candidate_entity.get('file_path', '')
+            file_path=candidate_entity.get('file_path', ''),
+            line_start=candidate_entity.get('line_start', 0),
+            line_end=candidate_entity.get('line_end', 0)
         )
     
     def rank_entities(self, 
@@ -253,6 +259,8 @@ class RelevanceScorer:
                             path_decay_factor=0.0,
                             path_info={},
                             file_path=entity.get('file_path', ''),
+                            line_start=entity.get('line_start', 0),
+                            line_end=entity.get('line_end', 0)
                         )
                     )
                     continue
@@ -278,6 +286,8 @@ class RelevanceScorer:
                         path_decay_factor=path_decay_factor,
                         path_info={'length': float(path_length)},
                         file_path=entity.get('file_path', ''),
+                        line_start=entity.get('line_start', 0),
+                        line_end=entity.get('line_end', 0)
                     )
                 )
 

@@ -295,6 +295,13 @@ class Step5RelevanceScoring:
                 # Get embedding (will use cache if available)
                 embedding = self.embedding_generator.generate_embedding(entity_text)
                 
+                # CRITICAL FIX: Extract actual code snippet from file
+                code_snippet = self._extract_code_snippet(
+                    score.file_path,
+                    getattr(score, 'line_start', 0),
+                    getattr(score, 'line_end', 0)
+                )
+                
                 # Prepare storage record
                 embeddings_to_store[score.entity_id] = {
                     'embedding': embedding.tolist() if hasattr(embedding, 'tolist') else embedding,
@@ -302,14 +309,14 @@ class Step5RelevanceScoring:
                         'entity_name': score.entity_name,
                         'entity_type': score.entity_type,
                         'file_path': score.file_path,
-                        'line_start': 0,
-                        'line_end': 0,
+                        'line_start': getattr(score, 'line_start', 0),
+                        'line_end': getattr(score, 'line_end', 0),
                         'relevance_score': float(score.total_score),
                         'semantic_similarity': float(score.semantic_similarity),
                         'textual_similarity': float(score.textual_similarity),
                         'path_length': float(score.path_length),
                         'path_decay_factor': float(score.path_decay_factor),
-                        'code_snippet': entity_text[:500],  # First 500 chars
+                        'code_snippet': code_snippet,  # Actual code from file
                         'created_at': time.time(),
                         'problem_description': problem_description[:200],  # Store query context
                         'kgcompass_scored': True
@@ -327,6 +334,68 @@ class Step5RelevanceScoring:
                 
         except Exception as e:
             self.logger.error(f"Failed to store results in vector DB: {e}", exc_info=True)
+    
+    def _extract_code_snippet(self, file_path: str, line_start: int = 0, line_end: int = 0, max_lines: int = 15) -> str:
+        """
+        Extract code snippet from file during ingestion.
+        
+        Args:
+            file_path: Path to source file
+            line_start: Starting line number (1-indexed)
+            line_end: Ending line number (1-indexed)
+            max_lines: Maximum lines to extract (default: 15)
+        
+        Returns:
+            Extracted code snippet or empty string if failed
+        """
+        if not file_path:
+            return ''
+        
+        try:
+            from pathlib import Path
+            path = Path(file_path)
+            
+            # Try multiple path resolution strategies
+            if not path.exists():
+                # Strategy 1: Relative to current working directory
+                path = (Path.cwd() / file_path).resolve()
+            
+            if not path.exists():
+                # Strategy 2: Relative to workspace/repos (common for parsed repos)
+                path = (Path.cwd() / 'workspace' / 'repos' / file_path).resolve()
+            
+            if not path.exists():
+                # Strategy 3: Search in workspace/repos subdirectories
+                repos_path = Path.cwd() / 'workspace' / 'repos'
+                if repos_path.exists():
+                    # Try to find the file in any subdirectory
+                    for repo_dir in repos_path.iterdir():
+                        if repo_dir.is_dir():
+                            candidate = (repo_dir / file_path).resolve()
+                            if candidate.exists():
+                                path = candidate
+                                break
+            
+            if not path.exists():
+                return ''
+            
+            lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
+            if not lines:
+                return ''
+            
+            if line_start and line_end and line_start > 0 and line_end >= line_start:
+                # Extract specified range
+                start = max(0, line_start - 1)
+                end = min(len(lines), line_end)
+                snippet = lines[start:end]
+                return '\n'.join(snippet[:max_lines]).strip()
+            
+            # Fallback: return first max_lines from file
+            return '\n'.join(lines[:max_lines]).strip()
+            
+        except Exception as e:
+            self.logger.debug(f"Failed to extract snippet from {file_path}: {e}")
+            return ''
     
     def _create_error_result(self, error_message: str) -> Dict:
         """Create error result dictionary"""
