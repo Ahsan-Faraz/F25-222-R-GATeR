@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Test 1: NullPointerException in select",
+    "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n\npublic class SelectorTest {\n    @Test\n    void testSelectElement() {\n        String html = \"<html><body><div class='content'>Hello</div></body></html>\";\n        Document doc = Jsoup.parse(html);\n        Element div = doc.selectFirst(\".missing\");\n        String text = div.text();\n        assertEquals(\"Hello\", text);\n    }\n}",
+    "error_message": "java.lang.NullPointerException: Cannot invoke \"org.jsoup.nodes.Element.text()\" because \"div\" is null\n\tat SelectorTest.testSelectElement(SelectorTest.java:12)",
+    "line_number": 7,
+    "broken_line_numbers": [12]
+  },
+  {
+    "name": "Test 2: IndexOutOfBoundsException in children access",
+    "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.jsoup.select.Elements;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertNotNull;\n\npublic class ChildAccessTest {\n    @Test\n    void testGetChild() {\n        String html = \"<html><body><div></div></body></html>\";\n        Document doc = Jsoup.parse(html);\n        Element div = doc.selectFirst(\"div\");\n        Element child = div.child(0);\n        assertNotNull(child);\n    }\n}",
+    "error_message": "java.lang.IndexOutOfBoundsException: Index 0 out of bounds for length 0\n\tat java.base/jdk.internal.util.Preconditions.outOfBounds(Preconditions.java:64)\n\tat ChildAccessTest.testGetChild(ChildAccessTest.java:13)",
+    "line_number": 8,
+    "broken_line_numbers": [13]
+  },
+  {
+    "name": "Test 3: ClassCastException in node traversal",
+    "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.jsoup.nodes.Node;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n\npublic class TraversalTest {\n    @Test\n    void testNextSibling() {\n        String html = \"<html><body><p>First</p> <p>Second</p></body></html>\";\n        Document doc = Jsoup.parse(html);\n        Element first = doc.selectFirst(\"p\");\n        Element second = (Element) first.nextSibling();\n        assertEquals(\"Second\", second.text());\n    }\n}",
+    "error_message": "java.lang.ClassCastException: class org.jsoup.nodes.TextNode cannot be cast to class org.jsoup.nodes.Element\n\tat TraversalTest.testNextSibling(TraversalTest.java:13)",
+    "line_number": 8,
+    "broken_line_numbers": [13]
+  },
+  {
+    "name": "Test 4: IllegalArgumentException in attribute access",
+    "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n\npublic class AttributeTest {\n    @Test\n    void testGetAttribute() {\n        String html = \"<html><body><a href='http://example.com'>Link</a></body></html>\";\n        Document doc = Jsoup.parse(html);\n        Element link = doc.selectFirst(\"a\");\n        String url = link.attr(null);\n        assertEquals(\"http://example.com\", url);\n    }\n}",
+    "error_message": "java.lang.IllegalArgumentException: Attribute key must not be null\n\tat org.jsoup.nodes.Attributes.get(Attributes.java:89)\n\tat AttributeTest.testGetAttribute(AttributeTest.java:12)",
+    "line_number": 7,
+    "broken_line_numbers": [12]
+  },
+  {
+    "name": "Test 5: NoSuchElementException in Elements access",
+    "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.jsoup.select.Elements;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n\npublic class ElementsTest {\n    @Test\n    void testFirstElement() {\n        String html = \"<html><body></body></html>\";\n        Document doc = Jsoup.parse(html);\n        Elements divs = doc.select(\"div\");\n        Element first = divs.first();\n        assertEquals(\"content\", first.className());\n    }\n}",
+    "error_message": "java.lang.NullPointerException: Cannot invoke \"org.jsoup.nodes.Element.className()\" because \"first\" is null\n\tat ElementsTest.testFirstElement(ElementsTest.java:13)",
+    "line_number": 8,
+    "broken_line_numbers": [13]
+  }
+]
