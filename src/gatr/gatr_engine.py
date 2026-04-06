@@ -1876,7 +1876,8 @@ class GATREngine:
         }
         
         for snippet in snippets[:20]:
-            code = snippet.get('code', '')
+            # Handle standardized code_snippet field
+            code = snippet.get('code_snippet', snippet.get('code', ''))
             
             # Detect setup patterns
             if 'setUp' in code:

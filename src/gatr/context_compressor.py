@@ -845,11 +845,45 @@ class ContextCompressor:
                 'snippet': hit.get('code_snippet', '')[:200]
             })
         
+        # --- DYNAMIC SNIPPET BUDGETING ---
+        MAX_SNIPPET_CHARS = 40000  # Allocates roughly ~10k tokens specifically for code snippets
+        snippets_to_include = []
+        current_chars = 0
+        
+        for snippet in snippets:
+            # Safely handle inconsistent dictionary keys across the pipeline
+            snippet_text = snippet.get('code_snippet', snippet.get('code', snippet.get('compressed_snippet', '')))
+            
+            # Ensure we actually have text
+            if not snippet_text:
+                continue
+            
+            snippet_chars = len(snippet_text)
+            
+            # Check if adding this snippet exceeds our safe token budget
+            if current_chars + snippet_chars <= MAX_SNIPPET_CHARS:
+                # Standardize the key to 'code_snippet' for downstream consistency
+                standardized_snippet = snippet.copy()
+                standardized_snippet['code_snippet'] = snippet_text
+                snippets_to_include.append(standardized_snippet)
+                current_chars += snippet_chars
+            else:
+                self.logger.info(
+                    f"[COMPRESSION] Snippet budget reached ({current_chars}/{MAX_SNIPPET_CHARS} chars). "
+                    f"Included {len(snippets_to_include)}/{len(snippets)} snippets."
+                )
+                break
+        
+        self.logger.info(
+            f"[COMPRESSION] Final snippet selection: {len(snippets_to_include)}/{len(snippets)} snippets, "
+            f"{current_chars} chars (~{current_chars // 4} tokens)"
+        )
+        
         return CompressedContext(
-            top_entities=entities[:20],  # Top 20 entities
-            compressed_snippets=snippets[:15],  # Top 15 snippets
+            top_entities=entities[:20],  # Keep top entities cap for metadata
+            compressed_snippets=snippets_to_include,  # Use the dynamic list here
             compressed_patterns=patterns,
-            compressed_paths=paths,
+            compressed_paths=paths[:20],  # Cap paths to avoid overwhelming context
             semantic_examples=semantic_examples,
             error_summary=error_summary,
             api_deltas=api_deltas

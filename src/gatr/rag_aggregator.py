@@ -182,7 +182,8 @@ class RAGAggregator:
         snippet_lookup = {}
         for snippet in snippets:
             entity_id = snippet.get('entity_id', '')
-            snippet_lookup[entity_id] = snippet.get('code', '')
+            # Handle standardized code_snippet field
+            snippet_lookup[entity_id] = snippet.get('code_snippet', snippet.get('code', ''))
         
         # Analyze each entity for potential API changes
         for entity in entities:
@@ -259,7 +260,8 @@ class RAGAggregator:
         
         # From code snippets (highest confidence)
         for snippet in snippets[:10]:
-            code = snippet.get('code', '')
+            # Handle standardized code_snippet field
+            code = snippet.get('code_snippet', snippet.get('code', ''))
             if code:
                 usage = CanonicalUsage(
                     entity_name=snippet.get('entity_name', ''),
