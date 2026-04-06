@@ -90,6 +90,74 @@ class ContextCompressor:
     def __init__(self):
         self.logger = logging.getLogger('gatr.context_compressor')
     
+    def _extract_local_snippet(self, file_path: str, line_start: int = 0, line_end: int = 0, 
+                              max_lines: int = 12, context_lines: int = 2) -> str:
+        """
+        Smart fallback snippet extraction with limited context.
+        
+        RULES:
+        - Limit to 8-12 lines around the entity
+        - Add context_lines before/after for readability
+        - Only use when ingestion/vector DB snippet missing
+        
+        Args:
+            file_path: Path to source file
+            line_start: Starting line number (1-indexed)
+            line_end: Ending line number (1-indexed)
+            max_lines: Maximum lines to extract (default: 12)
+            context_lines: Lines of context before/after (default: 2)
+        
+        Returns:
+            Extracted snippet or empty string if failed
+        """
+        if not file_path:
+            return ''
+
+        try:
+            from pathlib import Path
+            path = Path(file_path)
+            if not path.exists():
+                # Try resolving relative paths from workspace root.
+                path = (Path.cwd() / file_path).resolve()
+                if not path.exists():
+                    return ''
+
+            lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
+            if not lines:
+                return ''
+
+            if line_start and line_end and line_start > 0 and line_end >= line_start:
+                # Smart extraction: add context lines before/after
+                start = max(1, line_start - context_lines)
+                end = min(len(lines), line_end + context_lines)
+                
+                # Limit to max_lines
+                total_lines = end - start + 1
+                if total_lines > max_lines:
+                    # Prioritize the actual entity lines over context
+                    entity_lines = line_end - line_start + 1
+                    if entity_lines <= max_lines:
+                        # Trim context equally from both sides
+                        excess = total_lines - max_lines
+                        trim_before = min(context_lines, excess // 2)
+                        trim_after = excess - trim_before
+                        start = line_start - (context_lines - trim_before)
+                        end = line_end + (context_lines - trim_after)
+                    else:
+                        # Entity itself is too large, just take first max_lines
+                        start = line_start
+                        end = line_start + max_lines - 1
+                
+                if end >= start:
+                    snippet = lines[start - 1:end]
+                    return '\n'.join(snippet).strip()
+
+            # Fallback to head chunk if no valid line window (limit to max_lines)
+            return '\n'.join(lines[:max_lines]).strip()
+        except Exception as e:
+            self.logger.debug(f"Failed to extract snippet from {file_path}: {e}")
+            return ''
+    
     def compress_context(self, 
                          broken_test: Dict,
                          error_message: str,
@@ -191,14 +259,19 @@ class ContextCompressor:
             if not isinstance(semantic_score, (int, float)) or math.isnan(semantic_score) or math.isinf(semantic_score):
                 semantic_score = 0.0
             
-            # Calculate combined score
-            combined_score = (self.KG_WEIGHT * kg_score) + (self.SEMANTIC_WEIGHT * semantic_score)
+            # Calculate combined score with snippet boost
+            # IMPROVEMENT: Boost entities that have code snippets
+            # Code-bearing entities are more valuable than doc-only entities
+            has_snippet = bool(entity.get('code_snippet', ''))
+            snippet_boost = 0.1 if has_snippet else -0.05
+            combined_score = (self.KG_WEIGHT * kg_score) + (self.SEMANTIC_WEIGHT * semantic_score) + snippet_boost
             
             scored_entity = {
                 **entity,
                 'combined_score': combined_score,
                 'kg_compass_score': kg_score,
-                'semantic_similarity': semantic_score
+                'semantic_similarity': semantic_score,
+                'has_snippet': has_snippet
             }
             scored_entities.append(scored_entity)
         
@@ -271,8 +344,9 @@ class ContextCompressor:
             
             # Filter: Dead code (entities with no connections - relaxed for top entities)
             if len(connected_entities) > 0 and entity_id not in connected_entities:
-                # Allow top-scored entities even if not in paths
-                if combined_score < 0.3:
+                source = entity.get('source', '')
+                # Never drop vector/kgcompass entities on connectivity — they have no graph node IDs
+                if source not in ('vector', 'kgcompass', 'semantic_alternative') and combined_score < 0.3:
                     continue
             
             # Create compressed entity
@@ -284,7 +358,7 @@ class ContextCompressor:
                 combined_score=combined_score,
                 kg_compass_score=entity.get('kg_compass_score', 0),
                 semantic_similarity=entity.get('semantic_similarity', 0),
-                compressed_snippet='',
+                compressed_snippet=entity.get('code_snippet', ''),  # carry forward ingestion snippet
                 line_start=entity.get('line_start', 0),
                 line_end=entity.get('line_end', 0)
             )
@@ -348,11 +422,31 @@ class ContextCompressor:
         )
 
         missing_snippet_count = 0
+        fallback_extraction_count = 0
         for entity in prioritized_entities:
-            code = snippet_lookup.get(entity.entity_id, '') or snippet_lookup.get(str(entity.entity_id), '')
+            # Use already-carried snippet if present, fall back to lookup
+            code = entity.compressed_snippet or snippet_lookup.get(entity.entity_id, '') or snippet_lookup.get(str(entity.entity_id), '')
+            is_fallback = False
+            
+            # SMART FALLBACK: Prioritize relevance
+            # 1. Always prefer compressed snippet from ingestion/vector DB
+            # 2. Only use file system fallback if snippet missing
+            if not code and entity.file_path:
+                code = self._extract_local_snippet(
+                    file_path=entity.file_path,
+                    line_start=getattr(entity, 'line_start', 0),
+                    line_end=getattr(entity, 'line_end', 0),
+                    max_lines=self.MAX_SNIPPET_LINES
+                )
+                if code:
+                    fallback_extraction_count += 1
+                    is_fallback = True
             
             if not code:
                 missing_snippet_count += 1
+                self.logger.warning(
+                    f"[SNIPPET_MISSING] {entity.entity_name} | file={entity.file_path}"
+                )
                 continue
             
             # Compress the snippet
@@ -367,7 +461,8 @@ class ContextCompressor:
                 'entity_type': entity.entity_type,
                 'file_path': entity.file_path,
                 'code': compressed_code,
-                'score': entity.combined_score
+                'score': entity.combined_score,
+                'is_fallback': is_fallback  # Mark fallback for debugging
             })
 
         fallback_used = False
@@ -389,13 +484,26 @@ class ContextCompressor:
                         break
 
         self.logger.info(
-            "Snippet compression: input_entities=%d raw_snippets=%d retained=%d missing_for_entities=%d fallback_used=%s",
+            "Snippet compression: input_entities=%d raw_snippets=%d retained=%d missing_for_entities=%d fallback_extracted=%d fallback_used=%s",
             len(prioritized_entities),
             len(raw_snippets),
             len(compressed_snippets),
             missing_snippet_count,
+            fallback_extraction_count,
             fallback_used,
         )
+        
+        # Track snippet coverage
+        total = len(prioritized_entities)
+        with_snippets = sum(1 for e in prioritized_entities if e.compressed_snippet)
+        coverage = with_snippets / total if total > 0 else 0
+        self.logger.info(
+            f"[SNIPPET_COVERAGE] Compression: {with_snippets}/{total} ({coverage:.2%})"
+        )
+        if coverage < 0.6:
+            self.logger.warning(
+                f"[SNIPPET_COVERAGE] Low snippet coverage ({coverage:.2%}) - repair quality may degrade"
+            )
         
         return compressed_snippets
 
