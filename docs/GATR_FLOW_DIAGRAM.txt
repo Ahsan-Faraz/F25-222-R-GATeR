@@ -1,0 +1,171 @@
+┌─────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (GATRPanel)                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                    User fills form with:
+                    ┌─────────────────────────┐
+                    │ ✓ test_name (required)  │
+                    │ ✓ test_code (required)  │
+                    │ ✓ error_message (req)   │
+                    │ ○ test_file (optional)  │
+                    │ ○ test_class (optional) │
+                    └─────────────────────────┘
+                                    │
+                                    ▼
+                    POST /api/backend/gatr/repair
+                    (Timeout: 120 seconds)
+                                    │
+┌─────────────────────────────────────────────────────────────────────┐
+│                    BACKEND (web_server.py)                          │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                    Validate required fields
+                    Build broken_test dict:
+                    {
+                      test_name: "testParseFood",
+                      test_code: "def test...",
+                      test_file: "" or "tests/test.py",
+                      test_class: "" or "TestClass",
+                      line_number: None
+                    }
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    GATR ENGINE (gatr_engine.py)                     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┴───────────────────────────┐
+        │                                                       │
+        ▼                                                       ▼
+┌──────────────────────┐                            ┌──────────────────────┐
+│  STEP 1: INGESTION   │                            │   Fields Used:       │
+│  _ingest_raw_context │                            │   ✓ test_name        │
+└──────────────────────┘                            │   ✓ test_code        │
+        │                                            │   ✗ test_file        │
+        │ Parse error_message                        │   ✗ test_class       │
+        │ Extract imports from test_code             └──────────────────────┘
+        │ Build semantic query
+        │
+        ├─► Search Knowledge Graph (120 entities)
+        │   - Score by keyword overlap
+        │   - Filter noise entities
+        │
+        ├─► Search Vector Database (50 hits)
+        │   - Semantic similarity search
+        │
+        └─► Return raw_context
+                │
+                ▼
+┌──────────────────────┐                            ┌──────────────────────┐
+│  STEP 2: COMPRESS    │                            │   Fields Used:       │
+│  _compress_context   │                            │   ✓ test_file        │
+└──────────────────────┘                            │     (for file_path)  │
+        │                                            │   ✗ test_class       │
+        │ Hybrid scoring (KGCompass + Semantic)      └──────────────────────┘
+        │ Deduplicate entities
+        │ Build focused context
+        │
+        └─► Return compressed_context
+                │
+                ▼
+┌──────────────────────┐                            ┌──────────────────────┐
+│  STEP 3: AGGREGATE   │                            │   Fields Used:       │
+│  _aggregate_context  │                            │   ✓ test_file        │
+└──────────────────────┘                            │     (language detect)│
+        │                                            │   ✓ test_code        │
+        │ Detect language:                           │     (language detect)│
+        │   if test_file.endswith('.py'):            └──────────────────────┘
+        │       language = 'python'
+        │   elif '.java' in test_file:
+        │       language = 'java'
+        │   else:
+        │       # Fallback to code patterns
+        │       if 'def test_' in test_code:
+        │           language = 'python'
+        │
+        │ Select repair strategy
+        │
+        └─► Return augmented_context
+                │
+                ▼
+┌──────────────────────┐                            ┌──────────────────────┐
+│  STEP 4: LLM REPAIR  │                            │   Fields Used:       │
+│  _generate_llm_repair│                            │   ✓ test_name        │
+└──────────────────────┘                            │   ✓ test_code        │
+        │                                            │   ✓ test_file        │
+        │ Build LLM prompt:                          │     (shown in prompt)│
+        │   "## TEST INFORMATION                     └──────────────────────┘
+        │    - Test: testParseFood
+        │    - File: tests/test.py  ← (or empty)
+        │    - Language: PYTHON
+        │    - Error: AssertionError...
+        │    
+        │    ## RETRIEVED CONTEXT
+        │    [entities and code snippets]
+        │    
+        │    ## BROKEN TEST
+        │    [original test code]
+        │    
+        │    Generate fixed test..."
+        │
+        ├─► Send to LLM (LM Studio/Ollama)
+        │   Wait for response (can take 30-60 seconds)
+        │
+        └─► Parse repaired code from LLM response
+                │
+                ▼
+┌──────────────────────┐                            ┌──────────────────────┐
+│  STEP 5: SAVE        │                            │   Fields Used:       │
+│  _save_repair_result │                            │   ✓ test_name        │
+└──────────────────────┘                            │   ✓ test_file        │
+        │                                            │   ✓ test_code        │
+        │ Generate unified diff:                     └──────────────────────┘
+        │   from_file = "a/tests/test.py"  ← (or "a/testParseFood")
+        │   to_file = "b/tests/test.py"    ← (or "b/testParseFood")
+        │
+        │ Save files:
+        │   workspace/fix/default_project/
+        │     ├─ testParseFood_20260405_011155_report.json
+        │     └─ testParseFood_20260405_011155.patch
+        │
+        └─► Return TestRepairResult
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    BACKEND RESPONSE                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                    {
+                      success: true,
+                      repair_id: "repair_1_...",
+                      repaired_code: "...",
+                      repair_strategy: "graphrag_llm_repair",
+                      confidence: 0.85,
+                      processing_time: 45.2,
+                      diff_content: "...",
+                      ...
+                    }
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    FRONTEND DISPLAY                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                    Show repaired code in diff viewer
+                    Display repair strategy & confidence
+                    Provide download button for patch
+
+
+═══════════════════════════════════════════════════════════════════════
+
+IMPACT OF OPTIONAL FIELDS:
+
+test_file:
+  ✓ When provided: Better language detection, proper diff paths, context in prompt
+  ✗ When empty: Language from code patterns, test_name as filename, still works
+
+test_class:
+  ✓ When provided: Could help infer production class (TestFoo → Foo)
+  ✗ When empty: Relies on semantic search only, still works fine
+
+CONCLUSION: System works WITHOUT these fields, they just add extra context.

@@ -1,0 +1,194 @@
+GATR Code Snippet Flow - Current vs Fixed
+===========================================
+
+CURRENT FLOW (BROKEN)
+----------------------
+
+Step 1: Raw Context Ingestion (_ingest_raw_context)
+│
+├─ KG Entities (from Kuzu graph)
+│  ├─ Get node_data.code_snippet
+│  ├─ If empty → _extract_local_snippet() ✅
+│  └─ Result: code_snippet populated ✅
+│
+├─ Vector Entities (from LanceDB)
+│  ├─ Get hit.code_snippet from LanceDB
+│  └─ Result: code_snippet populated ✅
+│
+└─ KGCompass Entities (highest relevance!)
+   ├─ Get score.entity_id, score.entity_name, etc.
+   ├─ NO code_snippet field added ❌
+   └─ Result: code_snippet MISSING ❌
+   
+   ↓
+   
+Step 2: Context Compression (_step_snippet_compression)
+│
+├─ Build snippet_lookup from raw_context['snippets']
+│  ├─ KG snippets: ✅ in lookup
+│  ├─ Vector snippets: ✅ in lookup
+│  └─ KGCompass snippets: ❌ NOT in lookup
+│
+├─ For each entity:
+│  ├─ Look up code in snippet_lookup
+│  ├─ If found → compress and set entity.compressed_snippet ✅
+│  └─ If NOT found → skip entity, missing_snippet_count++ ❌
+│
+└─ Result:
+   ├─ KG entities: compressed_snippet populated ✅
+   ├─ Vector entities: compressed_snippet populated ✅
+   └─ KGCompass entities: compressed_snippet EMPTY ❌
+   
+   ↓
+   
+Step 3: Entity Merging (_merge_kgcompass_entities)
+│
+├─ For each KGCompass entity:
+│  └─ Map: ce.compressed_snippet → entity['code_snippet']
+│
+└─ Result:
+   ├─ KG entities: code_snippet = "public class Foo..." ✅
+   ├─ Vector entities: code_snippet = "public void bar()..." ✅
+   └─ KGCompass entities: code_snippet = "" ❌
+   
+   ↓
+   
+Step 4: Prompt Building (_build_entity_section)
+│
+├─ For each entity (sorted by score):
+│  ├─ Get snippet = entity.get('code_snippet', '')
+│  ├─ If snippet exists → display in code block ✅
+│  └─ If snippet empty → display only name/type ❌
+│
+└─ Result in prompt:
+   
+   ### 1. Element (class) — relevance: 0.95  ← KGCompass (highest score!)
+      File: src/main/java/org/jsoup/nodes/Element.java
+      [NO CODE SHOWN] ❌
+   
+   ### 2. Document (class) — relevance: 0.72  ← Vector entity
+      File: src/main/java/org/jsoup/nodes/Document.java
+      ```
+      public class Document extends Element {
+          public Document(String baseUri) { ... }
+      }
+      ``` ✅
+   
+   ### 3. parse (method) — relevance: 0.68  ← KG entity
+      File: src/main/java/org/jsoup/Jsoup.java
+      ```
+      public static Document parse(String html) {
+          return Parser.parse(html, "");
+      }
+      ``` ✅
+
+
+FIXED FLOW
+----------
+
+Step 1: Raw Context Ingestion (_ingest_raw_context) [FIXED]
+│
+├─ KG Entities (from Kuzu graph)
+│  ├─ Get node_data.code_snippet
+│  ├─ If empty → _extract_local_snippet() ✅
+│  └─ Result: code_snippet populated ✅
+│
+├─ Vector Entities (from LanceDB)
+│  ├─ Get hit.code_snippet from LanceDB
+│  └─ Result: code_snippet populated ✅
+│
+└─ KGCompass Entities (highest relevance!) [FIXED]
+   ├─ Get kg_node_data from graph.nodes[score.entity_id]
+   ├─ Get code_snippet from kg_node_data
+   ├─ If empty → _extract_local_snippet() ✅ [NEW]
+   ├─ Add code_snippet to entity dict ✅ [NEW]
+   ├─ Add to raw_context['snippets'] ✅ [NEW]
+   └─ Result: code_snippet populated ✅
+   
+   ↓
+   
+Step 2: Context Compression (_step_snippet_compression)
+│
+├─ Build snippet_lookup from raw_context['snippets']
+│  ├─ KG snippets: ✅ in lookup
+│  ├─ Vector snippets: ✅ in lookup
+│  └─ KGCompass snippets: ✅ in lookup [FIXED]
+│
+├─ For each entity:
+│  ├─ Look up code in snippet_lookup
+│  ├─ If found → compress and set entity.compressed_snippet ✅
+│  └─ If NOT found → skip entity, missing_snippet_count++
+│
+└─ Result:
+   ├─ KG entities: compressed_snippet populated ✅
+   ├─ Vector entities: compressed_snippet populated ✅
+   └─ KGCompass entities: compressed_snippet populated ✅ [FIXED]
+   
+   ↓
+   
+Step 3: Entity Merging (_merge_kgcompass_entities)
+│
+├─ For each KGCompass entity:
+│  └─ Map: ce.compressed_snippet → entity['code_snippet']
+│
+└─ Result:
+   ├─ KG entities: code_snippet = "public class Foo..." ✅
+   ├─ Vector entities: code_snippet = "public void bar()..." ✅
+   └─ KGCompass entities: code_snippet = "public class Element..." ✅ [FIXED]
+   
+   ↓
+   
+Step 4: Prompt Building (_build_entity_section)
+│
+├─ For each entity (sorted by score):
+│  ├─ Get snippet = entity.get('code_snippet', '')
+│  ├─ If snippet exists → display in code block ✅
+│  └─ If snippet empty → display only name/type
+│
+└─ Result in prompt:
+   
+   ### 1. Element (class) — relevance: 0.95  ← KGCompass (highest score!)
+      File: src/main/java/org/jsoup/nodes/Element.java
+      ```
+      public class Element extends Node {
+          private Tag tag;
+          private String baseUri;
+          
+          public Element(Tag tag, String baseUri) {
+              this.tag = tag;
+              this.baseUri = baseUri;
+          }
+      }
+      ``` ✅ [FIXED]
+   
+   ### 2. Document (class) — relevance: 0.72  ← Vector entity
+      File: src/main/java/org/jsoup/nodes/Document.java
+      ```
+      public class Document extends Element {
+          public Document(String baseUri) { ... }
+      }
+      ``` ✅
+   
+   ### 3. parse (method) — relevance: 0.68  ← KG entity
+      File: src/main/java/org/jsoup/Jsoup.java
+      ```
+      public static Document parse(String html) {
+          return Parser.parse(html, "");
+      }
+      ``` ✅
+
+
+SUMMARY
+-------
+
+Before Fix:
+- Top entities (KGCompass) have NO code snippets
+- LLM sees only entity names and scores
+- Cannot understand method signatures, parameters, or usage
+
+After Fix:
+- ALL entities have code snippets
+- LLM sees actual code for top-ranked entities
+- Can make informed repair decisions based on real code patterns
+
+Impact: 5-line code change fixes the most critical entities!
