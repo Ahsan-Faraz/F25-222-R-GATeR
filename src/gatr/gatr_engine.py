@@ -2752,7 +2752,7 @@ class GATREngine:
         entities_to_include = []
         entity_chars = 0
         for entity in entities:
-            snippet = entity.get('code_snippet', '')
+            snippet = entity.get('code_snippet', '') or ''  # Handle None case
             # Estimate entity section size
             entity_size = len(entity.get('name', '')) + len(snippet) + 200  # +200 for formatting
             if entity_chars + entity_size > entity_budget_chars:
