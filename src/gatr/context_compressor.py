@@ -826,6 +826,22 @@ class ContextCompressor:
                               broken_test: Dict) -> CompressedContext:
         """
         Step 2.6: Final Compressed Context Assembly
+        
+        Implements Smart Snippet Budgeting with three gates:
+        1. Quality Gate: Filters entities with score < MIN_RELEVANCE_SCORE (0.25)
+        2. Attention Cap: Limits to MAX_SNIPPET_COUNT (20) to prevent dilution
+        3. Budget Gate: Limits to MAX_SNIPPET_CHARS (8000) for token safety
+        
+        This balances context richness with attention management and prevents
+        the "needle in haystack" problem where too many snippets dilute LLM focus.
+        
+        Configuration:
+            MAX_SNIPPET_CHARS = 8000   # ~2k tokens, leaves room for test code
+            MAX_SNIPPET_COUNT = 20     # Hard cap to prevent attention dilution
+            MIN_RELEVANCE_SCORE = 0.25 # Quality threshold to filter noise
+        
+        Returns:
+            CompressedContext with top entities, filtered snippets, patterns, etc.
         """
         self.logger.debug("Step 2.6: Final assembly")
         
@@ -845,38 +861,53 @@ class ContextCompressor:
                 'snippet': hit.get('code_snippet', '')[:200]
             })
         
-        # --- DYNAMIC SNIPPET BUDGETING ---
-        MAX_SNIPPET_CHARS = 40000  # Allocates roughly ~10k tokens specifically for code snippets
+        # --- SMART SNIPPET BUDGETING ---
+        # Balances context richness with attention dilution prevention
+        MAX_SNIPPET_CHARS = 8000   # Leaves room in the 14k prompt budget for test code and relations
+        MAX_SNIPPET_COUNT = 20     # Hard cap to prevent LLM attention dilution ("needle in haystack")
+        MIN_RELEVANCE_SCORE = 0.25 # Quality gate: don't include noise just to fill space
+        
         snippets_to_include = []
         current_chars = 0
+        skipped_low_quality = 0
         
-        for snippet in snippets:
-            # Safely handle inconsistent dictionary keys across the pipeline
-            snippet_text = snippet.get('code_snippet', snippet.get('code', snippet.get('compressed_snippet', '')))
-            
-            # Ensure we actually have text
+        for entity in entities:  # Iterate through the scored top_entities
+            # Safely handle inconsistent dictionary keys
+            snippet_text = getattr(entity, 'compressed_snippet', getattr(entity, 'code_snippet', ''))
             if not snippet_text:
+                continue
+            
+            # Quality Gate: Skip low-relevance noise
+            entity_score = getattr(entity, 'combined_score', 0)
+            if entity_score < MIN_RELEVANCE_SCORE:
+                skipped_low_quality += 1
                 continue
             
             snippet_chars = len(snippet_text)
             
-            # Check if adding this snippet exceeds our safe token budget
-            if current_chars + snippet_chars <= MAX_SNIPPET_CHARS:
-                # Standardize the key to 'code_snippet' for downstream consistency
-                standardized_snippet = snippet.copy()
-                standardized_snippet['code_snippet'] = snippet_text
-                snippets_to_include.append(standardized_snippet)
+            # Cap Gate & Budget Gate
+            if len(snippets_to_include) < MAX_SNIPPET_COUNT and (current_chars + snippet_chars) <= MAX_SNIPPET_CHARS:
+                # Standardize snippet format for downstream
+                snippets_to_include.append({
+                    'entity_id': getattr(entity, 'entity_id', ''),
+                    'entity_name': getattr(entity, 'entity_name', ''),
+                    'entity_type': getattr(entity, 'entity_type', ''),
+                    'file_path': getattr(entity, 'file_path', ''),
+                    'code_snippet': snippet_text,
+                    'score': entity_score
+                })
                 current_chars += snippet_chars
             else:
                 self.logger.info(
-                    f"[COMPRESSION] Snippet budget reached ({current_chars}/{MAX_SNIPPET_CHARS} chars). "
-                    f"Included {len(snippets_to_include)}/{len(snippets)} snippets."
+                    f"[COMPRESSION] Budget/Cap reached: {current_chars}/{MAX_SNIPPET_CHARS} chars, "
+                    f"{len(snippets_to_include)}/{MAX_SNIPPET_COUNT} items."
                 )
                 break
         
         self.logger.info(
-            f"[COMPRESSION] Final snippet selection: {len(snippets_to_include)}/{len(snippets)} snippets, "
-            f"{current_chars} chars (~{current_chars // 4} tokens)"
+            f"[COMPRESSION] Smart snippet selection: {len(snippets_to_include)}/{len(entities)} entities, "
+            f"{current_chars} chars (~{current_chars // 4} tokens), "
+            f"skipped {skipped_low_quality} low-quality entities"
         )
         
         return CompressedContext(

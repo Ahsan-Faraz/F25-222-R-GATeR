@@ -156,13 +156,17 @@ class CodeParser:
                 methods = self._extract_methods(child, content)
         
         if class_name:
+            # Convert content to bytes for _get_node_text if needed
+            content_bytes = content.encode('utf-8') if isinstance(content, str) else content
+            
             class_entity = {
                 'name': class_name,
                 'type': 'class',
                 'line_start': node.start_point[0] + 1,
                 'line_end': node.end_point[0] + 1,
                 'methods': methods,
-                'base_classes': base_classes
+                'base_classes': base_classes,
+                'code_snippet': self._get_node_text(node, content_bytes)
             }
             entities['classes'].append(class_entity)
     
@@ -191,13 +195,17 @@ class CodeParser:
                     break
                 parent = parent.parent
             
+            # Convert content to bytes for _get_node_text if needed
+            content_bytes = content.encode('utf-8') if isinstance(content, str) else content
+            
             func_entity = {
                 'name': func_name,
                 'type': 'method' if is_method else 'function',
                 'line_start': node.start_point[0] + 1,
                 'line_end': node.end_point[0] + 1,
                 'parameters': parameters,
-                'is_test': is_test
+                'is_test': is_test,
+                'code_snippet': self._get_node_text(node, content_bytes)
             }
             
             if is_test:
@@ -474,7 +482,8 @@ class CodeParser:
                     'visibility': 'public' if 'public' in modifiers else 'package',
                     'is_abstract': 'abstract' in modifiers,
                     'is_final': 'final' in modifiers
-                }
+                },
+                'code_snippet': self._get_node_text(node, content)
             }
             entities['classes'].append(class_entity)
     
@@ -495,7 +504,8 @@ class CodeParser:
                 'type': 'interface',
                 'line_start': node.start_point[0] + 1,
                 'line_end': node.end_point[0] + 1,
-                'methods': methods
+                'methods': methods,
+                'code_snippet': self._get_node_text(node, content)
             }
             entities['classes'].append(interface_entity)  # Treat interfaces as classes for simplicity
     
@@ -535,7 +545,8 @@ class CodeParser:
                     'is_static': 'static' in modifiers,
                     'is_abstract': 'abstract' in modifiers,
                     'is_final': 'final' in modifiers
-                }
+                },
+                'code_snippet': self._get_node_text(node, content)
             }
             
             if is_test:
@@ -572,7 +583,8 @@ class CodeParser:
                 'type': 'constructor',
                 'line_start': node.start_point[0] + 1,
                 'line_end': node.end_point[0] + 1,
-                'parameters': parameters
+                'parameters': parameters,
+                'code_snippet': self._get_node_text(node, content)
             }
             entities['functions'].append(constructor_entity)
     
