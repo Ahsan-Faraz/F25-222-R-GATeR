@@ -1,0 +1,11 @@
+{
+  "test_name": "testExtractMetadata",
+  "test_file": "DocumentParserTest.java",
+  "test_class": "DocumentParserTest",
+  "language": "java",
+  "test_code": "import org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\nimport org.jsoup.nodes.Element;\nimport org.jsoup.select.Elements;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\nimport static org.junit.jupiter.api.Assertions.assertNotNull;\n\npublic class DocumentParserTest {\n\n    @Test\n    void testExtractMetadata() {\n        String html = \"<html><head><meta name='author' content='John Doe'><meta name='description' content='Test page'></head><body><h1>Title</h1></body></html>\";\n        Document doc = Jsoup.parse(html);\n        \n        Elements metaTags = doc.select(\"meta\");\n        Element authorMeta = metaTags.get(0);\n        String author = authorMeta.attr(\"content\");\n        \n        assertEquals(\"John Doe\", author);\n    }\n}",
+  "error_message": "java.lang.IndexOutOfBoundsException: Index 0 out of bounds for length 0\n\tat java.base/jdk.internal.util.Preconditions.outOfBounds(Preconditions.java:64)\n\tat java.base/jdk.internal.util.Preconditions.outOfBoundsCheckIndex(Preconditions.java:70)\n\tat java.base/jdk.internal.util.Preconditions.checkIndex(Preconditions.java:266)\n\tat java.base/java.util.Objects.checkIndex(Objects.java:359)\n\tat java.base/java.util.ArrayList.get(ArrayList.java:427)\n\tat DocumentParserTest.testExtractMetadata(DocumentParserTest.java:17)",
+  "line_number": 10,
+  "broken_line_numbers": [17],
+  "project_name": "jsoup_test"
+}
