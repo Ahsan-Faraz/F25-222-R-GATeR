@@ -171,7 +171,7 @@ class GATREngine:
         self.logger.info(f"Kuzu DB path: {self.kuzu_db_path}")
         self.logger.info(f"LanceDB path: {self.lancedb_path}")
         if self.lm_studio_available:
-            self.logger.info(f"✅ LM Studio connected at {self.lm_studio_url}")
+            self.logger.info(f"[OK] LM Studio connected at {self.lm_studio_url}")
         else:
             self.logger.warning(f"WARNING: LM Studio not available at {self.lm_studio_url} - will use fallback repair")
     
@@ -186,7 +186,7 @@ class GATREngine:
                 from src.knowledge_graph.kg_manager import KnowledgeGraphManager
                 if os.path.exists(self.kuzu_db_path):
                     self.kg_manager = KnowledgeGraphManager(kuzu_db_path=self.kuzu_db_path)
-                    self.logger.info(f"✅ Direct Kuzu connection established: {self.kuzu_db_path}")
+                    self.logger.info(f"[OK] Direct Kuzu connection established: {self.kuzu_db_path}")
                 else:
                     self.logger.warning(f"WARNING: Kuzu DB not found at {self.kuzu_db_path}")
             except Exception as e:
@@ -199,7 +199,7 @@ class GATREngine:
                 from src.vector_storage.step6_vector_storage import Step6VectorStorage
                 if os.path.exists(self.lancedb_path):
                     self.vector_storage = Step6VectorStorage(db_path=self.lancedb_path)
-                    self.logger.info(f"✅ Direct LanceDB connection established: {self.lancedb_path}")
+                    self.logger.info(f"[OK] Direct LanceDB connection established: {self.lancedb_path}")
                 else:
                     self.logger.warning(f"WARNING: LanceDB not found at {self.lancedb_path}")
             except Exception as e:
@@ -208,7 +208,7 @@ class GATREngine:
                     # Fallback to lightweight
                     from src.vector_storage.lightweight_vector_storage import LightweightVectorStorage
                     self.vector_storage = LightweightVectorStorage(db_path=self.lancedb_path)
-                    self.logger.info(f"✅ Lightweight LanceDB fallback established")
+                    self.logger.info(f"[OK] Lightweight LanceDB fallback established")
                 except Exception as e2:
                     self.logger.warning(f"WARNING: Lightweight vector storage also failed: {e2}")
         
@@ -217,7 +217,7 @@ class GATREngine:
             try:
                 from src.relevance.relevance_scorer import RelevanceScorer
                 self.relevance_scorer = RelevanceScorer()
-                self.logger.info(f"✅ Relevance scorer initialized")
+                self.logger.info(f"[OK] Relevance scorer initialized")
             except Exception as e:
                 self.logger.warning(f"WARNING: Could not init relevance scorer: {e}")
 
@@ -329,6 +329,66 @@ class GATREngine:
             return True
 
         return False
+    
+    def _is_ast_noise_entity(self, entity: Dict, ast_components: Dict, error_info: Dict) -> bool:
+        """
+        AST-aware noise filtering
+        
+        Filters out entities that don't match the broken line's AST components.
+        Prioritizes entities that match method calls and types from the broken line.
+        """
+        entity_name = entity.get('entity_name', '')
+        entity_type = entity.get('entity_type', '')
+        
+        # First apply standard noise filter
+        if self._is_noise_entity(entity_name, entity_type, error_info):
+            return True
+        
+        # Get AST components
+        method_calls = ast_components.get('method_calls', [])
+        types = ast_components.get('types', [])
+        literals = ast_components.get('literals', [])
+        
+        # If no AST components extracted, fall back to standard filtering
+        if not method_calls and not types:
+            return False
+        
+        entity_name_lower = entity_name.lower()
+        
+        # BOOST: Keep entities that match method calls from broken line
+        for method in method_calls:
+            if method.lower() in entity_name_lower:
+                self.logger.debug(f"[AST_FILTER] Keeping '{entity_name}' - matches method '{method}'")
+                return False
+        
+        # BOOST: Keep entities that match types from broken line
+        for type_name in types:
+            if type_name.lower() in entity_name_lower:
+                self.logger.debug(f"[AST_FILTER] Keeping '{entity_name}' - matches type '{type_name}'")
+                return False
+        
+        # PENALTY: Filter out generic helper methods that don't match AST
+        # These are often "baseline" methods like firstElementSibling, nextSibling, etc.
+        generic_helpers = [
+            'first', 'last', 'next', 'previous', 'sibling', 'child', 'parent',
+            'get', 'set', 'add', 'remove', 'clear', 'size', 'length', 'empty'
+        ]
+        
+        # Only filter if it's a generic helper AND doesn't match our AST
+        is_generic = any(helper in entity_name_lower for helper in generic_helpers)
+        if is_generic:
+            # Check if it matches any of our AST components
+            matches_ast = False
+            for method in method_calls:
+                if method.lower() == entity_name_lower:
+                    matches_ast = True
+                    break
+            
+            if not matches_ast:
+                self.logger.debug(f"[AST_FILTER] Filtering '{entity_name}' - generic helper, no AST match")
+                return True
+        
+        return False
 
     def _is_prompt_relevant_entity(self, entity: Dict, error_info: Dict) -> bool:
         """Prompt-stage relevance gate to remove graph noise before final prompt assembly."""
@@ -365,12 +425,146 @@ class GATREngine:
 
         return True
 
+    def _is_offset_bug(self, line_text: str) -> bool:
+        """
+        Detect if we accidentally extracted an import/annotation due to offset bug.
+        
+        Returns True if the line is clearly NOT executable code.
+        """
+        line_text = line_text.strip()
+        
+        # Empty lines
+        if not line_text:
+            return True
+        
+        # Import statements
+        if line_text.startswith('import ') or line_text.startswith('from '):
+            return True
+        
+        # Annotations
+        if line_text.startswith('@'):
+            return True
+        
+        # Package declarations
+        if line_text.startswith('package '):
+            return True
+        
+        # Comments
+        if line_text.startswith('//') or line_text.startswith('#') or line_text.startswith('/*'):
+            return True
+        
+        # Class/interface declarations (usually not the broken line)
+        if re.match(r'^(public|private|protected)?\s*(class|interface|enum)\s+\w+', line_text):
+            return True
+        
+        # Method signatures (not the body)
+        # Match: void methodName(...), public String methodName(...), etc.
+        # Should end with ) or ) throws or ) { but NOT have actual code after {
+        if re.match(r'^(public|private|protected)?\s*(static\s+)?(void|[\w<>]+)\s+\w+\s*\([^)]*\)\s*(throws\s+[\w,\s]+)?\s*\{?\s*$', line_text):
+            return True
+        
+        # Python function definitions (def name():)
+        if re.match(r'^def\s+\w+\s*\([^)]*\)\s*:\s*$', line_text):
+            return True
+        
+        return False
+    
+    def _fallback_text_search(self, code_lines: List[str], error_message: str, 
+                              error_info: Dict, broken_test: Dict) -> Tuple[Optional[str], int]:
+        """
+        Fallback text-based search when offset math fails.
+        
+        Strategy:
+        1. Search for method name from stack trace
+        2. Search for method name from error message
+        3. Search for common operation patterns
+        4. Return first executable line
+        
+        Returns: (line_text, line_number) or (None, 0)
+        """
+        self.logger.info("[LINE_EXTRACTION] Starting fallback text search...")
+        
+        # Extract method name from stack trace
+        # Pattern: at ClassName.methodName(FileName.java:15)
+        method_match = re.search(r'at\s+[\w.]+\.(\w+)\([^)]+\)', error_message)
+        if method_match:
+            method_name = method_match.group(1)
+            self.logger.debug(f"[FALLBACK] Looking for method: {method_name}")
+            
+            # Search for lines containing this method call
+            for i, line in enumerate(code_lines, 1):
+                stripped = line.strip()
+                if self._is_offset_bug(stripped):
+                    continue
+                if method_name in stripped and '(' in stripped:
+                    self.logger.info(f"[FALLBACK] Found method call at line {i}")
+                    return line, i
+        
+        # Extract wrong method from error_info
+        wrong_method = error_info.get('wrong_method', '')
+        if wrong_method:
+            self.logger.debug(f"[FALLBACK] Looking for wrong method: {wrong_method}")
+            for i, line in enumerate(code_lines, 1):
+                stripped = line.strip()
+                if self._is_offset_bug(stripped):
+                    continue
+                if wrong_method in stripped:
+                    self.logger.info(f"[FALLBACK] Found wrong method at line {i}")
+                    return line, i
+        
+        # Search for common operation patterns (prioritized by likelihood)
+        operation_patterns = [
+            (r'\.parse\(', 'parse'),
+            (r'\.select\(', 'select'),
+            (r'\.get\(', 'get'),
+            (r'\.first\(\)', 'first'),
+            (r'\.last\(\)', 'last'),
+            (r'\[\s*\d+\s*\]', 'array access'),
+            (r'assert\w+\(', 'assertion'),
+            (r'\.equals\(', 'equals'),
+            (r'\.size\(\)', 'size'),
+            (r'\.length\(\)', 'length'),
+            (r'new\s+\w+\(', 'constructor'),
+        ]
+        
+        for pattern, name in operation_patterns:
+            for i, line in enumerate(code_lines, 1):
+                stripped = line.strip()
+                if self._is_offset_bug(stripped):
+                    continue
+                if re.search(pattern, stripped):
+                    self.logger.info(f"[FALLBACK] Found {name} operation at line {i}")
+                    return line, i
+        
+        # Last resort: return first non-trivial executable line
+        for i, line in enumerate(code_lines, 1):
+            stripped = line.strip()
+            if self._is_offset_bug(stripped):
+                continue
+            # Must have some operation (not just variable declaration)
+            if any(op in stripped for op in ['(', '=', '.', '[']):
+                self.logger.info(f"[FALLBACK] Using first executable line at {i}")
+                return line, i
+        
+        self.logger.error("[FALLBACK] No suitable line found")
+        return None, 0
+
     def _extract_failing_line_context(self, test_code: str, error_message: str,
                                       error_info: Dict, broken_test: Dict) -> Tuple[List[str], List[int]]:
-        """Extract failing lines robustly so the buggy line is always included in prompt context."""
+        """
+        Extract failing lines robustly with text-based verification.
+        
+        Strategy:
+        1. Calculate offset from absolute line numbers
+        2. Verify extracted line is not an import/annotation (safety check)
+        3. Fallback to text-based search if offset math is wrong
+        """
         code_lines = test_code.split('\n') if test_code else []
         chosen_numbers = []
         chosen_lines = []
+        
+        # Get test start line for offset calculation
+        test_start_line = broken_test.get('line_number')  # Where test method starts in full file
 
         # 1) Use explicit data if provided by caller.
         for ln in broken_test.get('broken_line_numbers', []) or []:
@@ -378,10 +572,62 @@ class GATREngine:
                 ln = int(ln)
             except Exception:
                 continue
+            
+            original_ln = ln  # Keep original for logging
+            
+            # Apply offset correction if test_start_line is available
+            if test_start_line is not None:
+                # Convert absolute line number to payload line number
+                payload_ln = ln - test_start_line + 1
+                self.logger.debug(
+                    f"[LINE_EXTRACTION] Converting absolute line {ln} to payload line {payload_ln} "
+                    f"(test starts at {test_start_line})"
+                )
+                ln = payload_ln
+            
             if 1 <= ln <= len(code_lines):
-                chosen_numbers.append(ln)
-                chosen_lines.append(code_lines[ln - 1])
+                extracted_line = code_lines[ln - 1]
+                extracted_text = extracted_line.strip()
+                
+                # CRITICAL SAFETY CHECK: Verify we didn't land on import/annotation
+                if self._is_offset_bug(extracted_text):
+                    self.logger.warning(
+                        f"[LINE_EXTRACTION] OFFSET BUG DETECTED at line {ln}: '{extracted_text[:80]}'"
+                    )
+                    self.logger.warning(
+                        f"[LINE_EXTRACTION] Line is import/annotation, not actual code. Using fallback."
+                    )
+                    
+                    # Fallback: Text-based search for actual broken line
+                    fallback_line, fallback_num = self._fallback_text_search(
+                        code_lines, error_message, error_info, broken_test
+                    )
+                    
+                    if fallback_line:
+                        chosen_numbers.append(fallback_num)
+                        chosen_lines.append(fallback_line)
+                        self.logger.info(
+                            f"[LINE_EXTRACTION] FALLBACK SUCCESS at line {fallback_num}: "
+                            f"'{fallback_line.strip()[:80]}'"
+                        )
+                    else:
+                        self.logger.error(
+                            f"[LINE_EXTRACTION] FALLBACK FAILED - no suitable line found"
+                        )
+                else:
+                    # Offset math looks correct
+                    chosen_numbers.append(ln)
+                    chosen_lines.append(extracted_line)
+                    self.logger.info(
+                        f"[LINE_EXTRACTION] OK Extracted payload line {ln} (from absolute {original_ln}): "
+                        f"'{extracted_text[:80]}'"
+                    )
+            else:
+                self.logger.warning(
+                    f"[LINE_EXTRACTION] ERROR Line {ln} out of bounds (payload has {len(code_lines)} lines)"
+                )
 
+        # Text matching for broken_lines
         for line in broken_test.get('broken_lines', []) or []:
             text = (line or '').strip()
             if not text:
@@ -390,16 +636,62 @@ class GATREngine:
                 if text == code_line.strip() and idx not in chosen_numbers:
                     chosen_numbers.append(idx)
                     chosen_lines.append(code_line)
+                    self.logger.info(
+                        f"[LINE_EXTRACTION] TEXT MATCH at line {idx}: '{code_line.strip()[:80]}'"
+                    )
                     break
 
         # 2) Parse stack trace line number if available.
         if not chosen_numbers:
-            line_match = re.search(r'line\s+(\d+)', error_message, re.IGNORECASE)
-            if line_match:
-                ln = int(line_match.group(1))
+            # Try Java stack trace pattern first: FileName.java:15)
+            java_match = re.search(r'\.java:(\d+)\)', error_message)
+            if java_match:
+                ln = int(java_match.group(1))
+                original_ln = ln
+                
+                # Apply offset correction if test_start_line is available
+                if test_start_line is not None:
+                    payload_ln = ln - test_start_line + 1
+                    self.logger.debug(
+                        f"[LINE_EXTRACTION] Java trace: Converting absolute line {ln} to payload line {payload_ln}"
+                    )
+                    ln = payload_ln
+                
                 if 1 <= ln <= len(code_lines):
-                    chosen_numbers.append(ln)
-                    chosen_lines.append(code_lines[ln - 1])
+                    extracted_line = code_lines[ln - 1]
+                    extracted_text = extracted_line.strip()
+                    
+                    # CRITICAL SAFETY CHECK: Verify we didn't land on import/annotation
+                    if self._is_offset_bug(extracted_text):
+                        self.logger.warning(
+                            f"[LINE_EXTRACTION] Java trace OFFSET BUG at line {ln}: '{extracted_text[:80]}'"
+                        )
+                        
+                        # Fallback: Text-based search
+                        fallback_line, fallback_num = self._fallback_text_search(
+                            code_lines, error_message, error_info, broken_test
+                        )
+                        
+                        if fallback_line:
+                            chosen_numbers.append(fallback_num)
+                            chosen_lines.append(fallback_line)
+                            self.logger.info(
+                                f"[LINE_EXTRACTION] Java trace FALLBACK SUCCESS at line {fallback_num}"
+                            )
+                    else:
+                        chosen_numbers.append(ln)
+                        chosen_lines.append(extracted_line)
+                        self.logger.info(
+                            f"[LINE_EXTRACTION] Java trace OK at payload line {ln} (from absolute {original_ln})"
+                        )
+            else:
+                # Try Python/generic pattern: "line 123"
+                line_match = re.search(r'line\s+(\d+)', error_message, re.IGNORECASE)
+                if line_match:
+                    ln = int(line_match.group(1))
+                    if 1 <= ln <= len(code_lines):
+                        chosen_numbers.append(ln)
+                        chosen_lines.append(code_lines[ln - 1])
 
         # 3) IndexOutOfBounds heuristic: locate index access in test line.
         if not chosen_numbers and re.search(r'IndexOutOfBoundsException|out of bounds', error_message, re.IGNORECASE):
@@ -1173,8 +1465,8 @@ class GATREngine:
             with open(report_file, 'w', encoding='utf-8') as f:
                 json.dump(report, f, indent=2, default=str)
             
-            self.logger.info(f"✅ Saved patch to {diff_file}")
-            self.logger.info(f"✅ Saved report to {report_file}")
+            self.logger.info(f"[OK] Saved patch to {diff_file}")
+            self.logger.info(f"[OK] Saved report to {report_file}")
             
             return str(diff_file), str(report_file), diff_content
             
@@ -1200,46 +1492,51 @@ class GATREngine:
         
         test_name = broken_test.get('test_name', '')
         test_code = broken_test.get('test_code', '')
+        language = broken_test.get('language', 'java')
+        test_start_line = broken_test.get('line_number')  # Line where test method starts in full file
         
-        # Build query from error and test code - extract key terms
-        # Focus on: class names, method names from error, and imports from test code
-        import re
+        # ===== NEW: AST-BASED QUERY FORMULATION =====
+        # Instead of querying based on error symptoms (NullPointerException),
+        # extract the actual method calls and literals from the broken line
+        from .ast_query_builder import ASTQueryBuilder
         
-        # Extract class/module name from error (e.g., "FoodParser" from "FoodParser has no attribute 'text'")
-        class_match = re.search(r"'(\w+)'\s+(?:object\s+)?has\s+no\s+attribute", error_message)
-        class_name = class_match.group(1) if class_match else ""
+        ast_builder = ASTQueryBuilder()
+        ast_components = ast_builder.extract_broken_line_ast(
+            test_code, 
+            error_message, 
+            language,
+            test_start_line  # Pass test start line for offset correction
+        )
+        
+        # Build semantic query based on AST (method calls + literals)
+        # instead of error message symptoms
+        query = ast_builder.build_semantic_query(ast_components, error_message)
+        
+        # Extract exact terms for hybrid search boosting
+        exact_terms = ast_builder.extract_exact_terms(ast_components)
+        
+        self.logger.info(f"[AST_QUERY] Semantic query: {query}")
+        self.logger.info(f"[AST_QUERY] Exact terms: {exact_terms}")
+        self.logger.info(f"[AST_QUERY] Broken line: {ast_components.get('broken_line', '')[:100]}")
+        
         error_info = self._parse_error_message(error_message)
         
-        # Extract the wrong method name from error
-        attr_match = re.search(r"no\s+attribute\s+'(\w+)'", error_message)
-        wrong_method = attr_match.group(1) if attr_match else ""
-        
-        # Extract imports from test code to understand context
-        imports = re.findall(r'from\s+([\w.]+)\s+import\s+(\w+)', test_code)
-        import_context = " ".join([f"{mod} {cls}" for mod, cls in imports])
-        
-        # Build a focused query
-        query_parts = []
-        if class_name:
-            query_parts.append(class_name)
-        if wrong_method:
-            query_parts.append(wrong_method)
-        if import_context:
-            query_parts.append(import_context)
-        query_parts.append(test_name)
-        
-        query = " ".join(query_parts) if query_parts else f"{test_name} {error_message[:200]}"
-        self.logger.info(f"Semantic search query: {query}")
-        
-        # ===== STEP 1A: Get semantic hits from vector storage FIRST =====
+        # ===== STEP 1A: Get semantic hits from vector storage with AST boosting =====
         # This allows us to cross-reference with kg_seed entities
         semantic_hits_map = {}  # Map entity_name -> code_snippet for cross-reference
         
         if self.vector_storage:
             try:
-                search_result = self.vector_storage.search_similar_entities(query, top_k=20)
+                # Use hybrid search with exact term boosting
+                search_result = self.vector_storage.search_similar_entities(
+                    query, 
+                    top_k=20,
+                    exact_terms=exact_terms  # Boost entities matching method names
+                )
+                
                 for hit in self._normalize_vector_hits(search_result):
-                    if self._is_noise_entity(hit.get('entity_name', ''), hit.get('entity_type', ''), error_info):
+                    # Apply AST-aware noise filtering
+                    if self._is_ast_noise_entity(hit, ast_components, error_info):
                         continue
                     
                     entity_name = hit.get('entity_name', '')
@@ -1257,7 +1554,8 @@ class GATREngine:
                         'entity_name': entity_name,
                         'score': hit.get('relevance_score', 0),
                         'code_snippet': code_snippet,
-                        'semantic_similarity': hit.get('semantic_similarity', 0)
+                        'semantic_similarity': hit.get('semantic_similarity', 0),
+                        '_exact_matches': hit.get('_exact_matches', 0)  # Track AST boosting
                     })
                     raw_context['snippets'].append({
                         'entity_id': entity_id,
@@ -1270,12 +1568,14 @@ class GATREngine:
                         'file_path': hit.get('file_path', ''),
                         'score': hit.get('relevance_score', 0.0),
                         'semantic_similarity': hit.get('semantic_similarity', 0.0),
-                        'source': 'vector'
+                        'source': 'vector',
+                        'code_snippet': code_snippet,
+                        '_exact_matches': hit.get('_exact_matches', 0)
                     })
             except Exception as e:
                 self.logger.warning(f"Failed to get vector context: {e}")
         
-        # ===== STEP 1B: Get entities from knowledge graph =====
+        # ===== STEP 1B: Get entities from knowledge graph with AST-aware scoring =====
         # Cross-reference with semantic_hits_map to get code snippets
         if self.kg_manager:
             try:

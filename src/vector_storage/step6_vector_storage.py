@@ -185,19 +185,22 @@ class Step6VectorStorage:
                 'vectors_stored': 0
             }
     
-    def search_similar_entities(self, query: str, top_k: int = 20) -> Dict[str, Any]:
+    def search_similar_entities(self, query: str, top_k: int = 20, exact_terms: List[str] = None) -> Dict[str, Any]:
         """
-        Search for similar entities using semantic search
+        Hybrid search combining semantic similarity and exact term matching
         
         Args:
             query: Search query string
             top_k: Number of top results to return
+            exact_terms: List of exact terms to boost (method names, types)
             
         Returns:
             Dict with search results including KGCompass metadata
         """
         try:
             self.logger.info(f"Searching for similar entities: {query[:50]}...")
+            if exact_terms:
+                self.logger.info(f"[HYBRID_SEARCH] Exact terms for boosting: {exact_terms}")
             
             if not self.lance_manager.is_available():
                 return {
@@ -238,7 +241,7 @@ class Step6VectorStorage:
             search_result = self.lance_manager.search_vectors(
                 table_name="code_entity_embeddings",
                 query_vector=query_embedding,
-                top_k=top_k
+                top_k=top_k * 2  # Get more results for hybrid filtering
             )
             
             if not search_result.get('success'):
@@ -249,6 +252,15 @@ class Step6VectorStorage:
                 }
             
             results = search_result.get('results', [])
+            
+            # Apply exact term boosting if provided
+            if exact_terms and results:
+                results = self._apply_exact_term_boosting(results, exact_terms)
+                self.logger.info(f"[HYBRID_SEARCH] Applied exact term boosting, reranked {len(results)} results")
+            
+            # Limit to top_k after boosting
+            results = results[:top_k]
+            
             self.logger.info(f"Found {len(results)} similar entities")
             
             return {
@@ -267,6 +279,51 @@ class Step6VectorStorage:
                 'error': str(e),
                 'results': []
             }
+    
+    def _apply_exact_term_boosting(self, results: List[Dict], exact_terms: List[str], boost_weight: float = 2.0) -> List[Dict]:
+        """
+        Boost results that contain exact term matches in entity_name or code_snippet
+        
+        Args:
+            results: List of search results
+            exact_terms: Terms to match exactly (method names, types)
+            boost_weight: Multiplier for exact matches
+            
+        Returns:
+            Reranked results with boosted scores
+        """
+        boosted_results = []
+        
+        for result in results:
+            entity_name = (result.get('entity_name') or '').lower()
+            code_snippet = (result.get('code_snippet') or '').lower()
+            original_score = result.get('_distance', 1.0)
+            
+            # Count exact matches
+            exact_matches = 0
+            for term in exact_terms:
+                term_lower = term.lower()
+                # Check entity name (highest priority)
+                if term_lower in entity_name:
+                    exact_matches += 2
+                # Check code snippet
+                elif term_lower in code_snippet:
+                    exact_matches += 1
+            
+            # Apply boost
+            if exact_matches > 0:
+                # Lower distance = better match in LanceDB
+                boosted_score = original_score / (1 + exact_matches * boost_weight)
+                result['_distance'] = boosted_score
+                result['_exact_matches'] = exact_matches
+                self.logger.debug(f"[HYBRID_SEARCH] Boosted '{entity_name}': {original_score:.4f} -> {boosted_score:.4f} ({exact_matches} matches)")
+            
+            boosted_results.append(result)
+        
+        # Re-sort by boosted scores
+        boosted_results.sort(key=lambda x: x.get('_distance', 1.0))
+        
+        return boosted_results
     
     def incremental_sync(self, changed_entities: List[str] = None) -> Dict[str, Any]:
         """
