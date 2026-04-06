@@ -1,598 +1,525 @@
-# GATR Workflow: Complete Pipeline Flow
+# GATR Workflow Documentation
 
-**Last Updated**: 2026-04-07  
-**Status**: Production Ready
+**Last Updated**: April 7, 2026  
+**Status**: Production Ready ✅
 
 ---
 
 ## Overview
 
-GATR (Graph-Aware Test Repair) is an automated test repair system that uses knowledge graphs, vector embeddings, and LLM-based code generation to fix broken Java tests. This document describes the complete end-to-end workflow.
+GATR (Graph-Aware Test Repair) is an automated test repair system that uses knowledge graphs, vector embeddings, and LLM reasoning to fix broken tests. This document describes the complete workflow from repository analysis to test repair.
 
 ---
 
-## Phase 1: Repository Ingestion & Indexing
+## Pipeline Architecture
 
-### 1.1 Repository Parsing
 ```
-GitHub Repository
-    ↓
-[Clone & Parse]
-    ↓
-Tree-sitter AST Analysis
-    ↓
-Entity Extraction
-```
-
-**What Happens**:
-- Clone repository from GitHub
-- Parse all source files using tree-sitter
-- Extract entities: classes, methods, functions, fields, tests
-- Capture metadata: name, type, file_path, line_start, line_end
-
-### 1.2 Knowledge Graph Construction
-```
-Entities
-    ↓
-[Relationship Extraction]
-    ↓
-Kuzu Graph Database
-```
-
-**What Happens**:
-- Add entities as nodes in Kuzu
-- Extract relationships from AST: CALLS, MODIFIES, TESTS, USES, RETURNS, THROWS
-- Build graph structure with 7 relationship types
-- Store in Kuzu database (relationships only, no code)
-
-### 1.3 Relevance Scoring (KGCompass)
-```
-Entities + Graph
-    ↓
-[KGCompass Algorithm]
-    ↓
-Scored Entities
-```
-
-**What Happens**:
-- Calculate relevance scores for each entity
-- Combine: semantic similarity + textual similarity + path decay
-- Formula: `S(f) = β^l(f) * (α*cos + (1-α)*lev)`
-- Rank entities by total score
-
-### 1.4 Vector Storage (LanceDB)
-```
-Scored Entities
-    ↓
-[Code Extraction + Embedding]
-    ↓
-LanceDB Vector Store
-```
-
-**What Happens**:
-- For each entity, extract actual source code from file
-- Generate embeddings using sentence transformers
-- Store: embedding + metadata + code_snippet
-- Result: 90-100% entities have actual code
-
-**Key Fix (Bug 0)**: Previously stored metadata text instead of code. Now extracts actual source code using file_path + line_start + line_end.
-
----
-
-## Phase 2: Test Repair Request
-
-### 2.1 Input
-```json
-{
-  "broken_test": {
-    "test_name": "testParseHTML",
-    "test_code": "...",
-    "test_file": "ParserTest.java",
-    "test_class": "ParserTest",
-    "line_number": 45
-  },
-  "error_message": "java.lang.NullPointerException at line 50",
-  "project_name": "jsoup"
-}
-```
-
-### 2.2 Error Analysis
-```
-Error Message
-    ↓
-[Parse Stack Trace]
-    ↓
-Extract:
-  - Error type
-  - Failed line number
-  - Wrong method
-  - Expected vs actual
-```
-
-**What Happens**:
-- Parse error message for key information
-- Extract line numbers from stack trace (Java: `.java:15)`, Python: `line 15`)
-- Identify error type: NullPointerException, ClassCastException, etc.
-- Extract wrong method name if available
-
----
-
-## Phase 3: Context Retrieval (Dual Pipeline)
-
-GATR uses two parallel retrieval pipelines that are merged before prompt generation:
-
-### Flow A: Snippet-Rich Pipeline
-
-#### 3.1 Vector Search (LanceDB)
-```
-Error Message + Test Code
-    ↓
-[Build Semantic Query]
-    ↓
-LanceDB Search (top_k=20)
-    ↓
-Entities with Code Snippets (100% coverage)
-```
-
-**What Happens**:
-- Build query from error message and test code
-- Search LanceDB using semantic similarity
-- Get: entity_id, entity_name, code_snippet, semantic_score
-- Store in semantic_hits_map for cross-reference
-- Add to raw_context with source='vector'
-
-#### 3.2 Knowledge Graph Search (Kuzu)
-```
-Error Keywords
-    ↓
-[Graph Traversal]
-    ↓
-Kuzu Entities
-    ↓
-[Cross-Reference with LanceDB]
-    ↓
-Entities with Snippets (60-80% coverage)
-```
-
-**What Happens**:
-- Get entities from Kuzu graph
-- Score by keyword overlap with error
-- For each entity:
-  1. Try cross-reference with semantic_hits_map (by name)
-  2. If not found, do targeted LanceDB lookup by entity name (Bug 4 fix)
-  3. If still not found, extract from file system
-- Add to raw_context with source='kg_seed'
-
-**Key Fix (Bug 4)**: Added targeted LanceDB lookup when cross-reference fails, improving kg_seed coverage from 4% to 75%.
-
-#### 3.3 KGCompass Relevance Scoring
-```
-Kuzu Entities
-    ↓
-[Calculate Relevance Scores]
-    ↓
-Top Scored Entities
-    ↓
-[Extract Code from Files]
-    ↓
-Entities with Snippets (70-90% coverage)
-```
-
-**What Happens**:
-- Get candidate entities from Kuzu
-- Calculate relevance scores using KGCompass
-- Extract code snippets from file system
-- Add to raw_context with source='kgcompass'
-
-**Result**: raw_context with 160 entities, 75% with code snippets
-
-### Flow B: Graph-Rich Pipeline
-
-#### 3.4 GraphRAG Retrieval
-```
-Broken Test
-    ↓
-[Multi-hop Graph Traversal]
-    ↓
-Connected Entities
-    ↓
-Kuzu Relationships
-```
-
-**What Happens**:
-- Multi-hop graph traversal in Kuzu
-- Find entities connected to test
-- Get relationships: CALLS, MODIFIES, TESTS
-- Return entities (no code snippets - Kuzu doesn't store code)
-
-#### 3.5 GraphRAG Augmentation
-```
-Retrieved Entities
-    ↓
-[Add Usage Examples]
-    ↓
-[Add Conventions]
-    ↓
-Augmented Context
-```
-
-**What Happens**:
-- Add usage examples from codebase
-- Add project conventions
-- Return augmented_context (0% snippet coverage)
-
----
-
-## Phase 4: Context Compression & Aggregation
-
-### 4.1 Hybrid Scoring
-```
-Raw Context (160 entities)
-    ↓
-[Combine KG + Semantic Scores]
-    ↓
-Sorted Entities
-```
-
-**What Happens**:
-- For each entity: `combined_score = 0.4*kg_score + 0.6*semantic_score`
-- Add snippet_boost if has code_snippet
-- Sort by combined_score (descending)
-
-### 4.2 Entity Filtering
-```
-Sorted Entities
-    ↓
-[Filter by Score, Type, Connectivity]
-    ↓
-Top 20 Entities
-```
-
-**What Happens**:
-- Filter by score threshold (>0.15)
-- Filter by type (remove docs, imports, etc.)
-- Filter by connectivity (but exempt vector/kgcompass entities - Bug 1 fix)
-- Create CompressedEntity with code_snippet preserved (Bug 2 fix)
-
-**Key Fixes**:
-- Bug 1: Exempt vector/kgcompass entities from connectivity filter
-- Bug 2: Carry code_snippet through to CompressedEntity
-
-### 4.3 Snippet Compression
-```
-Top 20 Entities
-    ↓
-[Compress Code Snippets]
-    ↓
-15-18 Entities with Compressed Code
-```
-
-**What Happens**:
-- For each entity, check compressed_snippet first (Bug 2 fix)
-- If no code, try file system fallback
-- Compress: keep signatures, logic, assertions (max 15 lines)
-- Result: 70-80% entities with code
-
-### 4.4 Pattern & Path Compression
-```
-Usage Examples + Graph Paths
-    ↓
-[Compress to Summaries]
-    ↓
-Compressed Patterns + Paths
-```
-
-**What Happens**:
-- Analyze usage examples for patterns
-- Detect: setup patterns, teardown, builder vs constructor
-- Filter graph paths by relevance (max 3 hops, top 20 paths)
-- Compress to text summaries
-
-### 4.5 RAG Aggregation
-```
-Compressed Context
-    ↓
-[Cluster Entities, Extract API Deltas]
-    ↓
-Aggregated Context
-```
-
-**What Happens**:
-- Cluster entities by file/class
-- Detect API changes from error
-- Extract canonical usage patterns
-- Select repair strategy (method_rename, parameter_fix, etc.)
-
----
-
-## Phase 5: Pipeline Merge
-
-### 5.1 Merge Flow A and Flow B
-```
-Flow A (Snippet-Rich)     Flow B (Graph-Rich)
-    ↓                           ↓
-compressed_context        augmented_context
-aggregated_context
-    ↓                           ↓
-    └───────────[MERGE]─────────┘
-                ↓
-        Final Augmented Context
-```
-
-**What Happens**:
-1. Get augmented_context from Flow B (Kuzu entities, no snippets)
-2. Merge api_deltas and canonical_usages from Flow A
-3. Merge snippet-rich entities from Flow A raw_context (Bug 3 fix)
-4. Merge KGCompass entities from compressed_context
-5. Result: 20-30 entities, 60-70% with snippets
-
-**Key Fix (Bug 3)**: Previously only Flow B entities were used. Now merges snippet-rich entities from Flow A, dramatically improving code coverage in prompts.
-
----
-
-## Phase 6: Line Extraction & AST Analysis
-
-### 6.1 Robust Line Extraction
-```
-Stack Trace Line Number (absolute)
-    ↓
-[Apply Offset Correction]
-    ↓
-Payload Line Number (relative)
-    ↓
-[Safety Check: Import/Annotation?]
-    ↓
-[Text-Based Fallback if Needed]
-    ↓
-Actual Broken Line
-```
-
-**What Happens**:
-1. Parse stack trace for line number
-   - Java: `\.java:(\d+)\)` → extracts 15 from `Test.java:15)`
-   - Python: `line (\d+)` → extracts 15 from `line 15`
-2. Apply offset correction: `payload_line = stack_trace_line - test_start_line + 1`
-3. Extract line from code
-4. Safety check: Is it an import/annotation/method signature?
-5. If yes, use text-based fallback to find actual executable code
-6. Return actual broken line
-
-**Key Fixes**:
-- Added Java stack trace pattern support
-- Added offset correction for relative line numbers
-- Added safety checks to detect imports/annotations/signatures
-- Added text-based fallback when offset math fails
-
-### 6.2 AST-Based Query Building
-```
-Broken Line
-    ↓
-[Extract AST Components]
-    ↓
-Method Calls, Literals, Types
-    ↓
-[Build Semantic Query]
-    ↓
-Precise API Query
-```
-
-**What Happens**:
-- Extract method calls: `parse`, `select`, `first`
-- Extract literals: `"active"`, `"UTF-8"`
-- Extract types: `Document`, `Element`
-- Build query: "API documentation for parse method with argument 'UTF-8'"
-- Use for hybrid search with exact term matching
-
-**Key Improvement**: Query formulation based on SYNTAX not error symptoms, leading to more relevant entity retrieval.
-
----
-
-## Phase 7: Prompt Generation
-
-### 7.1 Token Budget Allocation
-```
-Max Prompt: 14000 chars (~3500 tokens)
-    ↓
-Core Context:        2500 chars (always)
-Entity Section:      6900 chars (60% of remaining)
-Relation Section:    2300 chars (50% of remaining)
-API Delta Section:   500+ chars (if space remains)
-Usage Section:       500+ chars (if space remains)
-```
-
-### 7.2 Entity Filtering for Prompt
-```
-Merged Entities (20-30)
-    ↓
-[Filter Noise Entities]
-    ↓
-[Sort by Combined Score]
-    ↓
-[Add Until Budget Exceeded]
-    ↓
-10-12 Entities in Prompt
-```
-
-**What Happens**:
-- Remove noise: timeout, outputhtml, generic exceptions
-- Keep: method, function, class, interface, constructor, test, field
-- Require: semantic_score > 0 OR kg_score >= 0.25 OR keyword_overlap >= 0.2
-- Sort by combined_score (descending)
-- Add entities until token budget exceeded
-- For each entity: name, type, file, score, code snippet (8 lines max)
-
-### 7.3 Prompt Structure
-```
-System Message (200 chars)
-    ↓
-Test Information (500 chars)
-    ↓
-Error Message (500 chars)
-    ↓
-Broken Test Code with >>> markers (1500 chars)
-    ↓
-Lines That Need to Change (300 chars)
-    ↓
-Confirmed Failing Line (200 chars)
-    ↓
-Knowledge Graph Entities (6900 chars)
-    ↓
-Entity Relations (2300 chars)
-    ↓
-Correct Usage Patterns (500+ chars)
-    ↓
-Task Instructions (200 chars)
-```
-
-**Result**: Rich prompt with 10-12 entities with code, 10-15 relations, 5+ code blocks
-
----
-
-## Phase 8: LLM Generation
-
-### 8.1 LLM Call
-```
-Final Prompt
-    ↓
-[LM Studio API]
-    ↓
-Model: Qwen 2.5 Coder 7B
-Temperature: 0.1
-Max Tokens: 4096
-    ↓
-Raw LLM Output
-```
-
-### 8.2 Output Cleaning
-```
-Raw LLM Output
-    ↓
-[Remove Markdown Fences]
-    ↓
-[Remove Preambles]
-    ↓
-[Extract Pure Code]
-    ↓
-Repaired Code
-```
-
-**What Happens**:
-- Remove markdown code blocks (```java)
-- Remove explanatory text
-- Extract only the repaired method
-- Validate syntax
-
----
-
-## Phase 9: Result Generation
-
-### 9.1 Diff Generation
-```
-Original Code + Repaired Code
-    ↓
-[Compute LCS-Based Diff]
-    ↓
-Unified Diff
-```
-
-### 9.2 Patch Creation
-```
-Repaired Code
-    ↓
-[Generate Git Patch]
-    ↓
-.patch File
-```
-
-### 9.3 Report Generation
-```
-All Pipeline Data
-    ↓
-[Compile Report]
-    ↓
-JSON Report with:
-  - Test info
-  - Repair details
-  - Context details
-  - Pipeline progress
-  - Scoring metrics
+┌─────────────────────────────────────────────────────────────────┐
+│                    GATR PIPELINE FLOW                            │
+└─────────────────────────────────────────────────────────────────┘
+
+1. REPOSITORY ANALYSIS
+   ├─ Clone repository
+   ├─ Extract entities (classes, methods, functions)
+   ├─ Build knowledge graph (Kuzu)
+   └─ Extract code snippets → LanceDB
+   
+2. RAW CONTEXT INGESTION (Step 1)
+   ├─ Vector search (LanceDB) → Semantic hits
+   ├─ Knowledge graph (Kuzu) → kg_seed entities
+   ├─ KGCompass scoring → Relevance scores
+   └─ Merge all sources → raw_context
+   
+3. CONTEXT COMPRESSION (Steps 2.1-2.6)
+   ├─ 2.1: Hybrid scoring (KGCompass + Semantic)
+   ├─ 2.2: Entity filtering (remove noise)
+   ├─ 2.3: Snippet compression (keep relevant lines)
+   ├─ 2.4: Test pattern compression
+   ├─ 2.5: Reasoning path reduction
+   └─ 2.6: Final assembly (dynamic budgeting)
+   
+4. RAG AGGREGATION (Steps 3.1-3.4)
+   ├─ 3.1: Entity clustering
+   ├─ 3.2: API delta extraction
+   ├─ 3.3: Canonical usage synthesis
+   └─ 3.4: Repair strategy selection
+   
+5. REPAIR GENERATION (Step 4)
+   ├─ GraphRAG Step 7: Retrieve context
+   ├─ GraphRAG Step 8: Augment context
+   ├─ GraphRAG Step 9: Generate fix (LLM)
+   └─ Return repaired code
 ```
 
 ---
 
-## Success Metrics
+## Detailed Workflow
 
-### Snippet Coverage
-- LanceDB: 90-100% ✅
-- Raw Ingestion: 70-80% ✅
-- After Compression: 60-70% ✅
-- In Prompt: 60-70% ✅
+### Phase 1: Repository Analysis
 
-### Entity Flow
-- Raw entities: 160
-- After filtering: 20
-- With snippets: 15-18
-- In prompt: 10-12
+**Purpose**: Extract entities and build knowledge graph
 
-### Prompt Quality
-- System message: >200 chars
-- User prompt: 2000-14000 chars
-- Entity section: Present with code blocks
-- Relations section: 10-15 relations
-- Token count: <3500 tokens
-- Code blocks: >5
+**Steps**:
+1. Clone repository to `workspace/repos/`
+2. Parse source files (Java, Python, etc.)
+3. Extract entities:
+   - Classes, interfaces, enums
+   - Methods, functions, constructors
+   - Fields, variables
+   - Test methods
+   - Imports, packages
+4. Build relationships:
+   - CALLS (method → method)
+   - BELONGS_TO (method → class)
+   - IMPORTS (file → package)
+   - TESTS (test → method)
+   - CREATES (method → class)
+5. Store in Kuzu (metadata only, no code)
+6. Extract code snippets and store in LanceDB with embeddings
 
-### Repair Quality
-- LLM generates syntactically valid code
-- Repair addresses error message
-- Minimal changes (only broken lines)
-- Compiles successfully
-
----
-
-## Key Innovations
-
-1. **Dual Pipeline Architecture**: Combines snippet-rich vector search with graph-rich relationship traversal
-2. **Robust Line Extraction**: 3-step strategy with offset correction and text-based fallback
-3. **AST-Based Query Building**: Queries based on syntax, not error symptoms
-4. **Hybrid Search**: Combines semantic similarity with exact term matching
-5. **Smart Entity Filtering**: Exempts high-value entities from connectivity filters
-6. **Pipeline Merge**: Combines best of both retrieval flows
-7. **Token Budget Management**: Priority-based allocation ensures critical context included
+**Output**:
+- Kuzu database: `workspace/gater_knowledge_graph/`
+- LanceDB: `workspace/lancedb/`
+- Entities: ~5,000-10,000 per repository
+- Snippet coverage: 100%
 
 ---
 
-## Logging & Debugging
+### Phase 2: Raw Context Ingestion (Step 1)
 
-### Key Log Markers
+**Purpose**: Gather all relevant entities for the broken test
 
-**Snippet Coverage**:
+**Input**:
+- Broken test code
+- Error message
+- Test metadata (file, class, method)
+
+**Process**:
+
+1. **AST-Based Query Formulation**:
+   - Extract method calls from broken line
+   - Extract literals and identifiers
+   - Build semantic query (e.g., "selectFirst Element text")
+
+2. **Vector Search (LanceDB)**:
+   - Search for entities matching semantic query
+   - Boost entities with exact method name matches
+   - Return top 20 semantic hits with code snippets
+
+3. **Knowledge Graph Traversal (Kuzu)**:
+   - Get entities related to test (kg_seed)
+   - Filter by entity type (function, class, method)
+   - Score by keyword overlap with error
+   - Return top 120 entities
+
+4. **KGCompass Relevance Scoring**:
+   - Score entities by graph connectivity
+   - Consider semantic similarity
+   - Return top 20 most relevant entities
+
+5. **Cross-Reference for Snippets**:
+   - kg_seed entities lookup snippets in LanceDB
+   - Targeted search by entity name
+   - Fallback to file system extraction
+
+6. **Merge All Sources**:
+   - Combine vector, kg_seed, and kgcompass entities
+   - Deduplicate by entity ID
+   - Preserve source tracking
+
+**Output**:
+- `raw_context` dictionary:
+  - `entities`: ~150 entities (80% with snippets)
+  - `snippets`: ~120 code snippets
+  - `semantic_hits`: ~20 vector matches
+  - `graph_paths`: ~185 relationships
+  - `conventions`: Project patterns
+
+**Metrics**:
+- Entities found: 150-200
+- Snippet coverage: 80%
+- Processing time: 30-50s
+
+---
+
+### Phase 3: Context Compression (Steps 2.1-2.6)
+
+**Purpose**: Compress raw context to fit LLM token budget
+
+#### Step 2.1: Hybrid Scoring
+
+**Formula**:
 ```
-[SNIPPET_COVERAGE] Raw ingestion: X/Y (Z%) | by source: {vector: 100%, kg_seed: 70%, kgcompass: 80%}
-[SNIPPET_COVERAGE] Compression: X/Y (Z%)
+combined_score = (0.4 × KGCompass) + (0.6 × Semantic) + snippet_boost
+snippet_boost = +0.1 if has_snippet else -0.05
 ```
 
-**Line Extraction**:
-```
-[LINE_EXTRACTION] Offset math: 15 - 10 + 1 = 6
-[LINE_EXTRACTION] OFFSET BUG DETECTED! Landed on: 'import static...'
-[LINE_EXTRACTION] FALLBACK SUCCESS at line 13: 'Document doc = Jsoup.parse(...)'
+**Output**: Scored entities sorted by relevance
+
+#### Step 2.2: Entity Filtering
+
+**Filters**:
+- Score threshold: `combined_score >= 0.15`
+- Remove duplicates by entity ID
+- Remove documentation-only nodes
+- Remove infrastructure nodes (repository, commit, import)
+- Exempt vector/kgcompass entities from connectivity filter
+
+**Output**: ~56 filtered entities
+
+#### Step 2.3: Snippet Compression
+
+**Process**:
+1. Build snippet lookup from raw_snippets
+2. For each entity:
+   - Get snippet from entity.compressed_snippet
+   - Fallback to snippet_lookup
+   - Fallback to file system extraction
+3. Compress snippet (keep signatures, logic, remove comments)
+4. Limit to 15 lines per snippet
+
+**Output**: ~42 compressed snippets
+
+#### Step 2.4: Test Pattern Compression
+
+**Detects**:
+- Setup patterns (@Before, setUp, @pytest.fixture)
+- Assertion format (assertThat, expect, assert)
+- Naming conventions (camelCase, snake_case)
+
+**Output**: Pattern string
+
+#### Step 2.5: Reasoning Path Reduction
+
+**Process**:
+- Extract graph paths for top entities
+- Limit to 20 paths
+- Include relationship types (CALLS, BELONGS_TO, etc.)
+
+**Output**: ~20 compressed paths
+
+#### Step 2.6: Final Assembly (Dynamic Budgeting)
+
+**Process**:
+```python
+MAX_SNIPPET_CHARS = 40000  # ~10k tokens
+snippets_to_include = []
+current_chars = 0
+
+for snippet in snippets:
+    snippet_text = snippet.get('code_snippet', snippet.get('code', ''))
+    if not snippet_text:
+        continue
+    
+    snippet_chars = len(snippet_text)
+    if current_chars + snippet_chars <= MAX_SNIPPET_CHARS:
+        standardized_snippet = snippet.copy()
+        standardized_snippet['code_snippet'] = snippet_text
+        snippets_to_include.append(standardized_snippet)
+        current_chars += snippet_chars
+    else:
+        break
 ```
 
-**Entity Flow**:
-```
-[ENTITY_FLOW] After compression: X entities, Y with compressed_snippet (Z%)
-[ENTITY_MERGE] augmented_context now has N entities after merging raw_context
+**Output**:
+- `CompressedContext`:
+  - `top_entities`: 20 entities
+  - `compressed_snippets`: 42 snippets (9,880 chars)
+  - `compressed_patterns`: Pattern string
+  - `compressed_paths`: 20 paths
+  - `error_summary`: Compressed error
+
+**Metrics**:
+- Snippet coverage: 73%
+- Budget used: 9,880 / 40,000 chars
+- Token estimate: ~2,470 tokens
+
+---
+
+### Phase 4: RAG Aggregation (Steps 3.1-3.4)
+
+**Purpose**: Aggregate context into actionable repair strategy
+
+#### Step 3.1: Entity Clustering
+
+**Process**:
+- Group entities by file path
+- Cluster by entity type
+- Identify related entities
+
+**Output**: ~9 clusters
+
+#### Step 3.2: API Delta Extraction
+
+**Detects**:
+- Parameter changes
+- Return type changes
+- Method renames
+- Factory pattern changes
+
+**Output**: ~1 API delta
+
+#### Step 3.3: Canonical Usage Synthesis
+
+**Process**:
+- Extract usage patterns from snippets
+- Identify assertion patterns
+- Find object creation patterns
+
+**Output**: ~16 canonical usages
+
+#### Step 3.4: Repair Strategy Selection
+
+**Strategies**:
+- `modify_lines`: Change specific lines
+- `add_null_check`: Add null safety
+- `update_api`: Update API usage
+- `fix_assertion`: Fix assertion logic
+
+**Output**: Selected strategy with confidence
+
+---
+
+### Phase 5: Repair Generation (Step 4)
+
+**Purpose**: Generate repaired test code using LLM
+
+#### GraphRAG Step 7: Retrieve Context
+
+**Process**:
+- Search LanceDB for additional context
+- Filter by relevance to error
+- Return top 30 entities
+
+**Output**: Retrieved entities (may be 0 if compressed context sufficient)
+
+#### GraphRAG Step 8: Augment Context
+
+**Process**:
+- Merge retrieved entities with compressed context
+- Deduplicate entities
+- Extract failing line from error
+- Build final entity list
+
+**Output**: Augmented context with ~135 entities
+
+#### GraphRAG Step 9: Generate Fix
+
+**Process**:
+1. **Build Prompt**:
+   - System message (repair instructions)
+   - Test information (file, language, error)
+   - Error message
+   - Broken test code (annotated with >>> markers)
+   - Entity section (top 12 entities with snippets)
+   - Relations (15 relationships)
+   - API deltas (if any)
+   - Usage patterns (if space)
+
+2. **Token Budget Management**:
+   - Max prompt: 14,000 chars (~3,500 tokens)
+   - Reserve 500 tokens for LLM output
+   - Prioritize: test + error > entities > relations > patterns
+
+3. **LLM Call**:
+   - Model: deepseek-r1-0528-qwen3-8b (or configured)
+   - Temperature: 0.1 (deterministic)
+   - Max tokens: 2000
+   - Timeout: 120s
+
+4. **Parse Response**:
+   - Extract repaired code
+   - Validate syntax
+   - Generate diff
+
+**Output**:
+- Repaired test code
+- Diff patch
+- Repair report (JSON)
+
+**Metrics**:
+- Prompt size: 7,670 chars (~1,917 tokens)
+- Entities in prompt: 12 (100% with snippets)
+- Relations: 15
+- Processing time: 8-10s (LLM call)
+
+---
+
+## Key Features
+
+### 1. Dynamic Snippet Budgeting
+
+**Problem**: Fixed 15-snippet limit caused only 10% coverage
+
+**Solution**: Character-based budgeting with 40,000 char limit
+
+**Benefits**:
+- Maximizes context (42+ snippets)
+- Respects LLM token limits
+- Adapts to snippet sizes
+
+### 2. Field Standardization
+
+**Problem**: Inconsistent field names (code, code_snippet, compressed_snippet)
+
+**Solution**: Fallback pattern handles all variants
+
+**Benefits**:
+- Backward compatible
+- No data loss
+- Clean API
+
+### 3. Cross-Reference Lookup
+
+**Problem**: kg_seed entities missing snippets
+
+**Solution**: Targeted LanceDB lookup by entity name
+
+**Benefits**:
+- 100% snippet coverage in storage
+- 80% coverage during ingestion
+- 73% coverage at runtime
+
+---
+
+## Performance Metrics
+
+### End-to-End Pipeline
+
+**Input**: Broken test + error message  
+**Output**: Repaired test code  
+**Time**: 56-60 seconds
+
+**Breakdown**:
+- Step 1 (Ingestion): 48s
+- Step 2 (Compression): 0.015s
+- Step 3 (Aggregation): 0.0002s
+- Step 4 (Generation): 8s
+
+### Resource Usage
+
+**Memory**:
+- Kuzu: ~100 MB
+- LanceDB: ~500 MB
+- Python process: ~1 GB
+
+**Disk**:
+- Kuzu database: ~50 MB
+- LanceDB: ~200 MB
+- Repository: ~10-50 MB
+
+---
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# LLM Configuration
+LM_STUDIO_BASE_URL=http://localhost:1234/v1
+LM_STUDIO_MODEL=deepseek/deepseek-r1-0528-qwen3-8b
+LM_STUDIO_API_KEY=lm-studio
+LM_STUDIO_REQUEST_TIMEOUT_S=120
+
+# Database Paths
+LANCEDB_PATH=workspace/lancedb
+KUZU_DB_PATH=workspace/gater_knowledge_graph
+
+# Snippet Budgeting
+GATR_MAX_SNIPPETS=40000  # Character limit for snippets
+
+# Fallback Mode
+GATR_DISABLE_FALLBACK=true  # Disable deterministic fallbacks
 ```
 
-**Token Budget**:
+### Tuning Parameters
+
+**Context Compression** (`src/gatr/context_compressor.py`):
+```python
+KG_WEIGHT = 0.4              # KGCompass weight in hybrid scoring
+SEMANTIC_WEIGHT = 0.6        # Semantic weight in hybrid scoring
+MIN_COMBINED_SCORE = 0.15    # Minimum score threshold
+MAX_SNIPPET_LINES = 15       # Max lines per snippet
+MAX_SNIPPET_CHARS = 40000    # Max total chars for snippets
 ```
-[TOKEN_BUDGET] Including N/M entities (budget: X chars, used: Y chars)
-[TOKEN_BUDGET] Including N/M relations (budget: X chars, used: Y chars)
+
+**Prompt Building** (`src/gatr/gatr_engine.py`):
+```python
+MAX_PROMPT_TOKENS = 3500     # Max tokens for prompt
+MAX_PROMPT_CHARS = 14000     # Max chars for prompt (~3500 tokens)
 ```
 
 ---
 
-## Conclusion
+## Troubleshooting
 
-The GATR workflow combines multiple AI techniques (knowledge graphs, vector embeddings, LLM generation) with robust engineering (dual pipelines, fallback strategies, token management) to achieve reliable automated test repair. The system has been battle-tested and refined through multiple bug fixes to ensure high-quality repairs.
+### Low Snippet Coverage
+
+**Symptom**: Repair quality poor, logs show <50% snippet coverage
+
+**Diagnosis**:
+```bash
+python scripts/audit_vector_db_snippets.py
+```
+
+**Solutions**:
+1. Check LanceDB coverage (should be 100%)
+2. Check ingestion logs for snippet extraction
+3. Verify repository path is correct
+4. Re-analyze repository if needed
+
+### LLM Timeout
+
+**Symptom**: Repair fails with timeout error
+
+**Solutions**:
+1. Increase `LM_STUDIO_REQUEST_TIMEOUT_S`
+2. Check LLM server is running
+3. Reduce prompt size (lower `MAX_SNIPPET_CHARS`)
+
+### Poor Repair Quality
+
+**Symptom**: Generated code is incorrect or unchanged
+
+**Diagnosis**:
+- Check snippet coverage in logs
+- Check entity relevance scores
+- Review prompt content in report JSON
+
+**Solutions**:
+1. Ensure snippet coverage >60%
+2. Verify error message is clear
+3. Check LLM model quality
+4. Review entity filtering thresholds
+
+---
+
+## Best Practices
+
+### For Users
+
+1. **Provide Clear Error Messages**: Include full stack trace
+2. **Use Descriptive Test Names**: Helps entity matching
+3. **Keep Tests Focused**: Single responsibility per test
+4. **Review Generated Repairs**: Always validate before committing
+
+### For Developers
+
+1. **Monitor Snippet Coverage**: Should be >60% at runtime
+2. **Log Extensively**: Use structured logging for debugging
+3. **Test with Real Repositories**: Synthetic tests miss edge cases
+4. **Profile Performance**: Identify bottlenecks early
+
+---
+
+## Future Enhancements
+
+1. **Smarter Snippet Compression**: AST-based line selection
+2. **Caching**: Cache extracted snippets by file hash
+3. **Frontend Metrics**: Display snippet coverage in UI
+4. **Multi-Language Support**: Expand beyond Java/Python
+5. **Incremental Updates**: Update only changed entities
+
+---
+
+**For questions or issues, see KNOWN_ISSUES.md or PIPELINE_STATUS_REPORT.md**
